@@ -1,28 +1,35 @@
 // middlewares/authMiddleware.js
 const jwt = require('jsonwebtoken');
 
-exports.verifyToken = (req, res, next) => {
-  const auth = req.headers.authorization || '';
-  if (!auth) return res.status(401).json({ error: 'Missing Authorization header', code: 'NO_AUTH' });
+// ดึง Bearer token ให้ทนเคส "Bearer a, Bearer b" และมี " ครอบ
+function extractBearerToken(authHeader = '') {
+  const parts = authHeader.split(',').map(s => s.trim());
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const m = /^Bearer\s+(.+)$/.exec(parts[i]);
+    if (!m) continue;
+    const token = m[1].replace(/^"+|"+$/g, '').trim();
+    if (token.split('.').length === 3) return token; // รูปแบบ JWT 3 ส่วน
+  }
+  return null;
+}
 
-  const [scheme, token] = auth.split(' ');
-  if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'Bad auth scheme. Use: Bearer <token>', code: 'BAD_SCHEME' });
+exports.verifyToken = (req, res, next) => {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized', code: 'NO_TOKEN' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }, (err, decoded) => {
-    if (err) {
-      const map = {
-        TokenExpiredError: { code: 'TOKEN_EXPIRED', msg: 'Token expired' },
-        JsonWebTokenError: { code: 'INVALID_TOKEN', msg: 'Invalid token' },
-        NotBeforeError:    { code: 'TOKEN_NOT_ACTIVE', msg: 'Token not active' },
-      };
-      const { code, msg } = map[err.name] || { code: 'VERIFY_FAIL', msg: err.message };
-      return res.status(401).json({ error: msg, code });
-    }
-    req.user = decoded; // { id, role, ... }
-    next();
-  });
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    return next();
+  } catch (err) {
+    const codeMap = {
+      TokenExpiredError: 'TOKEN_EXPIRED',
+      JsonWebTokenError: 'INVALID_TOKEN',
+      NotBeforeError: 'TOKEN_NOT_ACTIVE',
+    };
+    return res.status(401).json({ error: err.message, code: codeMap[err.name] || 'VERIFY_FAIL' });
+  }
 };
 
 exports.authorizeRoles = (...roles) => (req, res, next) => {

@@ -130,6 +130,22 @@ exports.getAllRepairs = async (req, res) => {
       return res.json(rows);
     }
 
+    if (role === 'technician') {
+      // ✅ ช่างเห็นเฉพาะงานที่ถูกมอบหมายให้ตนเองเท่านั้น
+      const [rows] = await db.query(
+        `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
+                r.status, r.created_at, r.updated_at, r.assigned_to,
+                u.name AS technician_name
+         FROM repairs r
+         LEFT JOIN users u ON u.id = r.assigned_to
+         WHERE r.assigned_to = ?
+         ORDER BY r.created_at DESC`,
+        [userId]
+      );
+      return res.json(rows);
+    }
+
+    // admin → เห็นทั้งหมด
     const [rows] = await db.query(
       `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
               r.status, r.created_at, r.updated_at, r.assigned_to,
@@ -145,6 +161,7 @@ exports.getAllRepairs = async (req, res) => {
   }
 };
 
+
 exports.getRepairById = async (req, res) => {
   try {
     const { role, id: userId } = req.user;
@@ -156,7 +173,7 @@ exports.getRepairById = async (req, res) => {
               u.name AS technician_name
        FROM repairs r
        LEFT JOIN users u ON u.id = r.assigned_to
-       WHERE r.repair_id = ?`,
+       WHERE r.repair_id = ? LIMIT 1`,
       [repairId]
     );
     const repair = rrows[0];
@@ -173,6 +190,10 @@ exports.getRepairById = async (req, res) => {
       }
     }
 
+    if (role === 'technician' && repair.assigned_to !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     return res.json(repair);
   } catch (err) {
     console.error('🔥 [getRepairById] error:', err);
@@ -186,16 +207,33 @@ exports.assignRepair = async (req, res) => {
     const { id: repairId } = req.params;
     if (!assigned_to) return res.status(400).json({ error: 'ต้องระบุ assigned_to' });
 
-    const [urows] = await db.query('SELECT id FROM users WHERE id = ?', [assigned_to]);
+    // ตรวจว่าช่างมีจริง
+    const [urows] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [assigned_to]);
     if (!urows.length) return res.status(404).json({ error: 'ไม่พบบุคคลที่ระบุ' });
 
+    // ดึงงานมาก่อน
+    const [rows] = await db.query(
+      'SELECT repair_id, status, assigned_to FROM repairs WHERE repair_id = ? LIMIT 1',
+      [repairId]
+    );
+    const job = rows[0];
+    if (!job) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
+
+    // (ออปชัน) บังคับให้มอบหมายได้เฉพาะงานใหม่
+    // if (job.status !== 'new') {
+    //   return res.status(409).json({ error: 'งานไม่อยู่ในสถานะ new', current_status: job.status });
+    // }
+
+    // ถ้าค่าเดิมเป็นคนเดียวกัน → ถือว่าสำเร็จ (idempotent)
+    if (job.assigned_to === Number(assigned_to)) {
+      return res.status(200).json({ message: 'มอบหมายงานสำเร็จ (เดิมอยู่แล้ว)', idempotent: true });
+    }
+
     const [result] = await db.query(
-      `UPDATE repairs
-         SET assigned_to = ?, updated_at = NOW()
-       WHERE repair_id = ? /* AND status = 'new' */ 
-       LIMIT 1`,
+      'UPDATE repairs SET assigned_to = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1',
       [assigned_to, repairId]
     );
+
     if (result.affectedRows !== 1) {
       return res.status(409).json({ error: 'มอบหมายไม่ได้ (ไม่พบงาน หรือมีคนแก้ไขไปแล้ว)' });
     }
@@ -205,6 +243,7 @@ exports.assignRepair = async (req, res) => {
     return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการมอบหมายงาน' });
   }
 };
+
 
 exports.updateStatus = async (req, res) => {
   try {
@@ -230,14 +269,31 @@ exports.updateStatus = async (req, res) => {
 // controllers/repairController.js
 exports.deleteRepair = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
+    // เผื่อ route ยังไม่ได้ใช้ authorizeRoles('admin')
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
+    }
 
     const { id: repairId } = req.params;
-    const [result] = await db.query('DELETE FROM repairs WHERE repair_id = ? LIMIT 1', [repairId]);
+    if (!repairId) {
+      return res.status(400).json({ error: 'Missing repair id', code: 'BAD_REQUEST' });
+    }
 
-    if (result.affectedRows !== 1) return res.status(404).json({ error: 'Repair not found', code: 'NOT_FOUND' });
-    res.json({ message: 'ลบงานซ่อมสำเร็จ' });
+    const [result] = await db.query(
+      'DELETE FROM repairs WHERE repair_id = ? LIMIT 1',
+      [repairId]
+    );
+
+    if (result.affectedRows !== 1) {
+      return res.status(404).json({ error: 'Repair not found', code: 'NOT_FOUND' });
+    }
+
+    // เลือกอย่างใดอย่างหนึ่ง:
+    // return res.status(204).send(); // No Content
+    return res.json({ message: 'ลบงานซ่อมสำเร็จ' });
   } catch (e) {
-    res.status(500).json({ error: 'เกิดข้อผิดพลาดในการลบงานซ่อม' });
+    console.error('🔥 [deleteRepair] error:', e);
+    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการลบงานซ่อม' });
   }
 };
+
