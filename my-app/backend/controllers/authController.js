@@ -60,7 +60,13 @@ exports.login = async (req, res) => {
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
-    const ok = await bcrypt.compare(password, user.password);
+    // ✅ รองรับทั้งรหัสที่เป็น bcrypt และ plaintext เดิม
+    let ok;
+    if (user.password && user.password.startsWith('$2')) {
+      ok = await bcrypt.compare(password, user.password);  // bcrypt
+    } else {
+      ok = (password === user.password);                   // plaintext เก่า
+    }
     if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
 
     const token = signUserToken({ id: user.id, role: user.role });

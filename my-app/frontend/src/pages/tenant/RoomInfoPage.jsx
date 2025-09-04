@@ -1,0 +1,83 @@
+import React, { useEffect, useState } from "react";
+import TenantNavbar from "../../components/nav/TenantNavbar";
+import { getMyRooms } from "../../services/room.api";
+
+export default function RoomInfoPage() {
+  const [rooms, setRooms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      setErr("");
+      const res = await getMyRooms();
+      setRooms(res);
+    } catch (e) {
+      const api = e?.response?.data;
+      setErr(api?.error || api?.message || "โหลดข้อมูลไม่สำเร็จ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="tn-shell">
+      <TenantNavbar />
+      <main className="tn-container">
+        <h1 className="tn-title">ข้อมูลห้องพัก</h1>
+        <p className="muted">แสดงเฉพาะห้องของบัญชีผู้ใช้ปัจจุบัน</p>
+
+        {/* ปุ่มรีเฟรช */}
+        <div style={{margin:"12px 0"}}>
+          <button onClick={load} className="btn-primary" style={{width:"auto", padding:"10px 14px"}}>
+            รีเฟรช
+          </button>
+        </div>
+
+        {/* สถานะโหลด / เออร์เรอร์ / ไม่มีข้อมูล */}
+        {loading && (
+          <div className="card"><p className="muted">กำลังโหลดข้อมูล…</p></div>
+        )}
+
+        {!loading && err && (
+          <div className="card"><p style={{color:"#b91c1c"}}>{err}</p></div>
+        )}
+
+        {!loading && !err && rooms.length === 0 && (
+          <div className="card"><p className="muted">ยังไม่มีห้องที่ผูกกับบัญชีนี้</p></div>
+        )}
+
+        {/* รายการห้อง (ปกติมักจะมี 1 ห้อง) */}
+        {!loading && !err && rooms.length > 0 && (
+          <div className="room-grid">
+            {rooms.map((r) => (
+              <article key={r.room_id} className="room-card">
+                <header className="room-head">
+                  <div className="room-badge">ห้อง {r.room_number}</div>
+                  <div className={`room-status ${r.status === "occupied" ? "ok" : "idle"}`}>
+                    {r.status === "occupied" ? "มีผู้พักอาศัย" : "ว่าง"}
+                  </div>
+                </header>
+
+                <dl className="kv">
+                  <div className="kv-row">
+                    <dt>รหัสห้อง</dt><dd>{r.room_id}</dd>
+                  </div>
+                  <div className="kv-row">
+                    <dt>ประเภท</dt><dd>{r.type || "-"}</dd>
+                  </div>
+                  <div className="kv-row">
+                    <dt>ราคา/เดือน</dt><dd>{Number(r.price).toLocaleString()} บาท</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

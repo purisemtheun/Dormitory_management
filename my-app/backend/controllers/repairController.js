@@ -245,26 +245,115 @@ exports.assignRepair = async (req, res) => {
 };
 
 
-exports.updateStatus = async (req, res) => {
+// ===== Update (PATCH /repairs/:id) — allow only title, description, due_date/deadline =====
+exports.updateRepair = async (req, res) => {
   try {
-    const { status } = req.body;
-    const { id: repairId } = req.params;
-
-    const allowed = new Set(['new', 'in_progress', 'completed', 'cancelled']);
-    if (!allowed.has(status)) {
-      return res.status(400).json({ error: 'สถานะไม่ถูกต้อง (new, in_progress, completed, cancelled)' });
+    const { role, id: userId } = req.user || {};
+    if (!userId) {
+      return res.status(401).json({ error: 'ยังไม่ได้เข้าสู่ระบบหรือ token หมดอายุ' });
     }
 
-    await db.query(
-      'UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ?',
-      [status, repairId]
+    const { id: repairId } = req.params;
+
+    // ✅ whitelist: อนุญาตเฉพาะ 3 ฟิลด์ + ฟิลด์ล็อกเวอร์ชัน
+    const allowed = new Set(['title','description','due_date','deadline','prev_updated_at','prev_updated_at_ts']);
+    const badKey = Object.keys(req.body).find(k => !allowed.has(k));
+    if (badKey) {
+      return res.status(400).json({ error: `ไม่อนุญาตให้แก้ฟิลด์: ${badKey}` });
+    }
+
+    const title = req.body.title;
+    const description = req.body.description;
+    const dueInput = (req.body.due_date ?? req.body.deadline);
+    const prevUpdatedAt = req.body.prev_updated_at;        // ISO string (ออปชัน)
+    const prevUpdatedAtTs = req.body.prev_updated_at_ts;   // ms since epoch (ออปชัน)
+
+    // ดึงงานเป้าหมาย
+    const [rows] = await db.query(
+      `SELECT repair_id, tenant_id, assigned_to, status, room_id, updated_at
+       FROM repairs WHERE repair_id = ? LIMIT 1`,
+      [repairId]
     );
-    return res.json({ message: 'อัปเดตสถานะสำเร็จ' });
+    const r = rows[0];
+    if (!r) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
+
+    // ตรวจสิทธิ์ตามบทบาท
+    if (role === 'tenant') {
+      const [trows] = await db.query(
+        'SELECT tenant_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
+        [userId]
+      );
+      const t = trows[0];
+      if (!t || t.tenant_id !== r.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+      if (r.status !== 'new' || r.assigned_to !== null) {
+        return res.status(409).json({ error: 'แก้ไขไม่ได้หลังถูกมอบหมายหรือเริ่มงานแล้ว', current_status: r.status });
+      }
+    } else if (role === 'technician') {
+      return res.status(403).json({ error: 'ช่างไม่สามารถแก้ไขหัวข้อ/คำอธิบาย/กำหนดเส้นตาย' });
+    } else if (!['admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // เตรียมฟิลด์อัปเดต (เฉพาะที่อนุญาต)
+    const fields = [];
+    const params = [];
+
+    if (title !== undefined) {
+      fields.push('title = ?');
+      params.push(String(title).trim());
+    }
+    if (description !== undefined) {
+      fields.push('description = ?');
+      params.push(description);
+    }
+    if (dueInput !== undefined) {
+      const d = toDateOnly(dueInput);
+      if (dueInput && !d) {
+        return res.status(400).json({ error: 'รูปแบบ due_date/deadline ไม่ถูกต้อง (ควรเป็น YYYY-MM-DD หรือ ISO ที่พาร์สได้)' });
+      }
+      fields.push('due_date = ?');
+      params.push(d);
+    }
+
+    if (!fields.length) {
+      return res.status(400).json({ error: 'ไม่มีฟิลด์ที่จะแก้ไข (title/description/due_date)' });
+    }
+
+    // อัปเดต + optimistic lock (รองรับทั้ง ISO และ timestamp)
+    let sql = `UPDATE repairs SET ${fields.join(', ')}, updated_at = NOW() WHERE repair_id = ?`;
+    params.push(repairId);
+
+    if (prevUpdatedAtTs !== undefined) {
+      sql += ' AND (UNIX_TIMESTAMP(updated_at) * 1000) = ?';
+      params.push(Number(prevUpdatedAtTs));
+    } else if (prevUpdatedAt) {
+      sql += ' AND updated_at = ?';
+      params.push(new Date(prevUpdatedAt));
+    }
+
+    const [result] = await db.query(sql, params);
+    if ((prevUpdatedAt || prevUpdatedAtTs !== undefined) && result.affectedRows === 0) {
+      return res.status(409).json({ error: 'ข้อมูลถูกแก้ไขไปก่อนหน้าแล้ว กรุณารีเฟรช' });
+    }
+
+    // ส่งแถวล่าสุดกลับ
+    const [out] = await db.query(
+      `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
+              r.status, r.created_at, r.updated_at, r.assigned_to,
+              u.name AS technician_name
+       FROM repairs r
+       LEFT JOIN users u ON u.id = r.assigned_to
+       WHERE r.repair_id = ? LIMIT 1`,
+      [repairId]
+    );
+
+    return res.json({ message: 'อัปเดตสำเร็จ', data: out[0] });
   } catch (err) {
-    console.error('🔥 [updateStatus] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการอัปเดตสถานะ' });
+    console.error('🔥 [updateRepair] error:', err);
+    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการอัปเดตใบแจ้งซ่อม' });
   }
 };
+
 
 // controllers/repairController.js
 exports.deleteRepair = async (req, res) => {
