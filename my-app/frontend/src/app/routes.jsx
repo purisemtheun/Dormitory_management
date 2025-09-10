@@ -7,25 +7,28 @@ import RegisterPage from "../pages/auth/RegisterPage.jsx";
 import RequireAuth from "./RequireAuth.jsx";
 import RequireRole from "./RequireRole.jsx";
 
-// ถ้ามีไฟล์พวกนี้อยู่แล้ว ใช้ได้เลย; ถ้าไม่มีให้คอมเมนต์ 3 บล็อกด้านล่างทิ้งก่อน
+// ถ้ามีไฟล์พวกนี้อยู่แล้ว ใช้ได้เลย; ถ้าไม่มีให้คอมเมนต์ทิ้ง
 import TenantPage from "../pages/tenant/TenantPage.jsx";
 import AdminPage from "../pages/admin/AdminPage.jsx";
 import TechPage from "../pages/tech/TechPage.jsx";
-import RoomInfoPage  from "../pages/tenant/RoomInfoPage.jsx";
+import RoomInfoPage from "../pages/tenant/RoomInfoPage.jsx";
+
+// ใช้ชื่อไฟล์ที่คุณมีจริง
+import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage.jsx";
 
 export const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
 
   // public
   { path: "/login", element: <LoginPage /> },
-  { path: "/register", element: <RegisterPage /> }, // ถ้าไม่ให้สมัครเอง ลบเส้นนี้ได้
+  { path: "/register", element: <RegisterPage /> },
 
-  // protected (คอมเมนต์ 3 บล็อกนี้ได้ ถ้ายังไม่มีไฟล์หน้า dashboard)
+  // dashboards
   {
     path: "/tenant",
     element: (
       <RequireAuth>
-        <RequireRole allow={["tenant"]}>
+        <RequireRole roles={["tenant"]}>
           <TenantPage />
         </RequireRole>
       </RequireAuth>
@@ -35,7 +38,7 @@ export const router = createBrowserRouter([
     path: "/admin",
     element: (
       <RequireAuth>
-        <RequireRole allow={["admin"]}>
+        <RequireRole roles={["admin"]}>
           <AdminPage />
         </RequireRole>
       </RequireAuth>
@@ -45,21 +48,39 @@ export const router = createBrowserRouter([
     path: "/tech",
     element: (
       <RequireAuth>
-        <RequireRole allow={["tech"]}>
+        <RequireRole roles={["tech"]}>
           <TechPage />
         </RequireRole>
       </RequireAuth>
     ),
   },
+
+  // tenant – room info
   {
     path: "/tenant/room",
     element: (
+      <RequireAuth>
         <RequireRole roles={["tenant"]}>
-            <RoomInfoPage />
+          <RoomInfoPage />
         </RequireRole>
+      </RequireAuth>
+    ),
+  },
+
+  // tenant – create repair (ฟอร์มแจ้งซ่อม)
+  {
+    path: "/tenant/repairs",
+    element: (
+      <RequireAuth>
+        <RequireRole roles={["tenant"]}>
+          <TenantRepairCreatePage />
+        </RequireRole>
+      </RequireAuth>
     ),
   },
 
   // fallback
   { path: "*", element: <Navigate to="/login" replace /> },
 ]);
+
+export default router;

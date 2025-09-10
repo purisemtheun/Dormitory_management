@@ -27,7 +27,7 @@ function toDateOnly(str) {
 exports.createRepair = async (req, res) => {
   try {
     const { title, description, room_id: roomIdInput, image_url } = req.body;
-    const dueRaw = req.body.due_date || req.body.deadline; // รองรับทั้งสองชื่อ
+    const dueRaw = req.body.due_date || req.body.deadline;
 
     if (!req.user?.id) {
       return res.status(401).json({ error: 'ยังไม่ได้เข้าสู่ระบบหรือ token หมดอายุ' });
@@ -66,7 +66,11 @@ exports.createRepair = async (req, res) => {
       return res.status(400).json({ error: 'รูปแบบ due_date/deadline ไม่ถูกต้อง (ควรเป็น YYYY-MM-DD หรือ ISO ที่พาร์สได้)' });
     }
 
-    const finalImageUrl = image_url || null;
+    // รองรับไฟล์ที่อัปโหลด
+    let finalImageUrl = image_url || null;
+    if (req.file && req.file.filename) {
+      finalImageUrl = `/uploads/repairs/${req.file.filename}`;
+    }
 
     // สร้าง repair_id (กันชนด้วย UNIQUE KEY ที่ DB)
     let repairId = makeRepairId();

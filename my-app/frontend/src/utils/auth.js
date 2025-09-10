@@ -1,57 +1,68 @@
 // src/utils/auth.js
-const TOKEN_KEY = "app:token"; // ใช้ key เดียวกันทั้งโปรเจกต์
 
+// ===== Config =====
+const TOKEN_KEY = "app:token"; // คุณใช้ key นี้อยู่แล้ว
+
+// ===== LocalStorage helpers =====
 export function saveToken(token) {
-  if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
 }
-
 export function getToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY) || "";
 }
-
 export function clearToken() {
-  if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);
 }
 
-export function getPayload() {
-  const token = getToken();
-  if (!token) return null;
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
+// ===== JWT helpers (parse payload แบบไม่ verify) =====
+function parseJwtPayload(token) {
   try {
-    const json = JSON.parse(atob(parts[1]));
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
     return json || null;
   } catch {
     return null;
   }
 }
 
-export function isTokenExpired(skewSec = 30) {
+export function getPayload() {
+  const t = getToken();
+  if (!t) return null;
+  return parseJwtPayload(t);
+}
+
+export function isTokenExpired() {
   const p = getPayload();
-  if (!p?.exp) return true;
-  const now = Math.floor(Date.now() / 1000);
-  return p.exp <= now + skewSec; // กัน clock skew
+  if (!p || !p.exp) return true; // ถ้าไม่มี exp ถือว่าหมดอายุ
+  const nowSec = Math.floor(Date.now() / 1000);
+  return p.exp <= nowSec;
 }
 
 export function isAuthed() {
-  return !!getToken() && !isTokenExpired();
+  const t = getToken();
+  if (!t) return false;
+  return !isTokenExpired();
 }
 
-// คืน role สำหรับ frontend routes ให้ตรงกับที่คุณใช้
-// backend ส่ง 'admin' | 'tenant' | 'technician'
+// ===== Role helpers =====
 export function getRole() {
-  const role = getPayload()?.role;
-  if (!role) return null;
-  if (role === "technician") return "tech"; // map ให้ตรง route guard
-  return role; // admin | tenant
+  const p = getPayload();
+  let role = p?.role || p?.roles || null;
+  if (Array.isArray(role)) role = role[0];
+  if (role === "technician") role = "tech"; // map ตามคอนเท็กซ์ของคุณ
+  return role || null;
 }
 
-export function getDefaultPathByRole(role = getRole()) {
-  if (role === "admin") return "/admin";
-  if (role === "tech") return "/tech";
-  if (role === "tenant") return "/tenant";
-  return "/";
+export function getDefaultPathByRole(role) {
+  switch (role) {
+    case "admin":
+      return "/admin";
+    case "tech":
+      return "/tech";
+    case "tenant":
+      return "/tenant";
+    default:
+      return "/login";
+  }
 }
