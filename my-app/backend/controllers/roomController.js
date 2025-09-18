@@ -87,6 +87,10 @@ exports.bookRoomForTenant = async (req, res) => {
     const [exist] = await db.query('SELECT tenant_id FROM tenants WHERE user_id = ? LIMIT 1', [userId]);
     if (exist.length) return res.status(400).json({ error: 'User already checked-in' });
 
+    // ห้องต้องยังไม่มี tenant อยู่ก่อน (เพิ่มส่วนนี้)
+    const [roomTenant] = await db.query('SELECT tenant_id FROM tenants WHERE room_id = ? LIMIT 1', [roomId]);
+    if (roomTenant.length) return res.status(400).json({ error: 'Room already has a tenant' });
+
     const tenantId = makeTenantId();
     await db.query(
       'INSERT INTO tenants (tenant_id, user_id, room_id, checkin_date) VALUES (?,?,?,?)',
@@ -98,6 +102,52 @@ exports.bookRoomForTenant = async (req, res) => {
     res.status(201).json({ message: 'Check-in success', tenant_id: tenantId });
   } catch (err) {
     console.error('bookRoomForTenant error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+// PATCH /api/rooms/:id   (admin) — อัปเดตบางฟิลด์
+exports.updateRoom = async (req, res) => {
+  try {
+    const roomId = req.params.id;
+    const allowed = new Set(['room_number', 'type', 'price', 'status']);
+    const fields = [];
+    const params = [];
+
+    Object.entries(req.body || {}).forEach(([k, v]) => {
+      if (allowed.has(k)) {
+        fields.push(`${k} = ?`);
+        params.push(v);
+      }
+    });
+    if (!fields.length) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(roomId);
+    const [result] = await db.query(`UPDATE rooms SET ${fields.join(', ')}, updated_at = NOW() WHERE room_id = ?`, params);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Room not found' });
+
+    const [[room]] = await db.query('SELECT * FROM rooms WHERE room_id = ?', [roomId]);
+    res.json({ message: 'Room updated', data: room });
+  } catch (err) {
+    console.error('updateRoom error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// DELETE /api/rooms/:id   (admin)
+exports.deleteRoom = async (req, res) => {
+  try {
+    const roomId = req.params.id;
+
+    // กันลบห้องที่มี tenant อยู่
+    const [rows] = await db.query('SELECT tenant_id FROM tenants WHERE room_id = ? LIMIT 1', [roomId]);
+    if (rows.length) return res.status(409).json({ error: 'Room has tenant(s). Remove tenant before delete.' });
+
+    const [result] = await db.query('DELETE FROM rooms WHERE room_id = ? LIMIT 1', [roomId]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Room not found' });
+
+    res.json({ message: 'Room deleted' });
+  } catch (err) {
+    console.error('deleteRoom error:', err);
     res.status(500).json({ error: err.message });
   }
 };

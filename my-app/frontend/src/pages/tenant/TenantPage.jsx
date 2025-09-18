@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import TenantNavbar from "../../components/nav/TenantNavbar";
+import LogoutButton from "../../components/nav/LogoutButton";
 
 export default function TenantPage() {
   return (
@@ -38,6 +39,8 @@ export default function TenantPage() {
               <p className="muted">ส่งคำขอใหม่และติดตามสถานะย้อนหลัง</p>
             </div>
           </Link>
+                        
+
 
           <Link to="/tenant/payments" className="tn-tile">
             <div className="tn-ico" aria-hidden>

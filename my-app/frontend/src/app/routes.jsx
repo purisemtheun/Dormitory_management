@@ -1,4 +1,3 @@
-// src/app/routes.jsx
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import LoginPage from "../pages/auth/LoginPage.jsx";
@@ -7,13 +6,15 @@ import RegisterPage from "../pages/auth/RegisterPage.jsx";
 import RequireAuth from "./RequireAuth.jsx";
 import RequireRole from "./RequireRole.jsx";
 
-// ถ้ามีไฟล์พวกนี้อยู่แล้ว ใช้ได้เลย; ถ้าไม่มีให้คอมเมนต์ทิ้ง
 import TenantPage from "../pages/tenant/TenantPage.jsx";
-import AdminPage from "../pages/admin/AdminPage.jsx";
+//import AdminPage from "../pages/admin/AdminPage.jsx";
 import TechPage from "../pages/tech/TechPage.jsx";
 import RoomInfoPage from "../pages/tenant/RoomInfoPage.jsx";
 
-// ใช้ชื่อไฟล์ที่คุณมีจริง
+// Admin layout + pages
+import AdminLayout from "../layouts/admin/AdminLayout.jsx";
+import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage.jsx";
+import AdminTenantsPage from "../pages/admin/AdminTenantsPage.jsx";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage.jsx";
 
 export const router = createBrowserRouter([
@@ -39,16 +40,21 @@ export const router = createBrowserRouter([
     element: (
       <RequireAuth>
         <RequireRole roles={["admin"]}>
-          <AdminPage />
+          <AdminLayout />
         </RequireRole>
       </RequireAuth>
     ),
+    children: [
+      { index: true, element: <Navigate to="rooms" replace /> },
+      { path: "rooms", element: <AdminRoomsManagePage /> },
+      { path: "tenants", element: <AdminTenantsPage /> }, // ✅ ใช้ตัวเดียว ไม่ซ้ำ
+    ]
   },
   {
     path: "/tech",
     element: (
       <RequireAuth>
-        <RequireRole roles={["tech"]}>
+        <RequireRole roles={["technician"]}> {/* ✅ เปลี่ยนจาก "tech" เป็น "technician" */}
           <TechPage />
         </RequireRole>
       </RequireAuth>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import TenantNavbar from "../../components/nav/TenantNavbar";
 import { getMyRooms } from "../../services/room.api";
+import { roomApi } from "../../services/room.api"; 
 
 export default function RoomInfoPage() {
   const [rooms, setRooms] = useState([]);
@@ -11,7 +12,7 @@ export default function RoomInfoPage() {
     try {
       setLoading(true);
       setErr("");
-      const res = await getMyRooms();
+      const res = await roomApi.list();
       setRooms(res);
     } catch (e) {
       const api = e?.response?.data;

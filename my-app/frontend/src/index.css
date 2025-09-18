@@ -148,4 +148,93 @@ select.input { appearance: none; background-position: right .75rem center; backg
 .kv dt{ color:#6b7280; }
 .kv dd{ margin:0; font-weight:600; }
 
+/* ===== Admin Shell (layout กว้างเต็ม) ===== */
+.ad-shell{
+  min-height: 100vh;
+  background: linear-gradient(135deg,#eef2ff,#ffffff);
+}
+.ad-wrap{
+  display: grid;
+  grid-template-columns: 260px 1fr;     /* sidebar 260px + main ยืด */
+  min-height: 100vh;
+}
+
+/* ===== Sidebar ดำยาว ===== */
+.ad-sidebar{
+  position: sticky; top: 0;
+  height: 100vh;         /* ยาวเต็มหน้าจอ */
+  background: #111;      /* ดำ */
+  color: #fff;
+  padding: 16px 12px;
+  border-right: 1px solid #222;
+}
+.ad-brand{
+  display:block;
+  text-decoration:none;
+  color:#fff;
+  font-weight:800;
+  letter-spacing:.2px;
+  margin-bottom: 14px;
+}
+.ad-nav{ display: grid; gap: 18px; }
+.ad-group{ display: grid; gap: 10px; }
+.ad-label{ color:#9ca3af; font-size:.8rem; font-weight:700; }
+
+.ad-link{
+  display:block;
+  text-decoration:none;
+  color:#e5e7eb;
+  padding:10px 12px;
+  border-radius:10px;
+  border:1px solid #1f2937;
+  background:#0f172a;             /* slate-900 */
+  transition: background .15s, color .15s, border-color .15s, transform .04s;
+}
+.ad-link:hover{ background:#111827; border-color:#374151; }
+.ad-link.active{
+  background:#1f2937;
+  border-color:#4f46e5;           /* indigo-600 */
+  color:#fff;
+  box-shadow: 0 0 0 2px rgba(79,70,229,.25) inset;
+}
+
+/* ===== Main content เต็มกว้าง ===== */
+.ad-main{
+  padding: 20px 20px 40px;
+}
+.ad-header{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  margin-bottom: 12px;
+}
+.ad-panel{
+  background:#fff; border:1px solid var(--gray-200);
+  border-radius:16px; padding:16px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.06);
+}
+
+/* ตาราง */
+.table{ width:100%; border-collapse: collapse; }
+.table th, .table td{ padding:10px 12px; border-bottom:1px solid var(--gray-200); text-align:left; }
+.table th{ background:#f9fafb; font-weight:700; }
+
+/* ===== ปุ่มสี (เหลือง/แดง) ===== */
+.btn{ 
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  padding:10px 12px; border:0; border-radius:12px; cursor:pointer;
+  background:#f3f4f6; color:#111827; font-weight:600;
+}
+.btn-warning{
+  background:#f59e0b; color:#111;         /* เหลือง */
+}
+.btn-warning:hover{ background:#d97706; }
+.btn-danger{
+  background:#ef4444; color:#fff;         /* แดง */
+}
+.btn-danger:hover{ background:#dc2626; }
+
+.btn-outline{
+  background:#fff; border:1px solid var(--gray-200);
+}
+
+
 
