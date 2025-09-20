@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import TenantNavbar from "../../components/nav/TenantNavbar";
-import { getMyRooms } from "../../services/room.api";
-import { roomApi } from "../../services/room.api"; 
+import { roomApi } from "../../services/room.api";
 
 export default function RoomInfoPage() {
   const [rooms, setRooms] = useState([]);
@@ -68,7 +67,13 @@ export default function RoomInfoPage() {
                     <dt>รหัสห้อง</dt><dd>{r.room_id}</dd>
                   </div>
                   <div className="kv-row">
-                    <dt>ประเภท</dt><dd>{r.type || "-"}</dd>
+                    <dt>สิ่งอำนวยความสะดวก</dt>
+                    <dd>
+                      {r.has_fan && "พัดลม "}
+                      {r.has_aircon && "แอร์ "}
+                      {r.has_fridge && "ตู้เย็น "}
+                      {(!r.has_fan && !r.has_aircon && !r.has_fridge) ? "-" : ""}
+                    </dd>
                   </div>
                   <div className="kv-row">
                     <dt>ราคา/เดือน</dt><dd>{Number(r.price).toLocaleString()} บาท</dd>

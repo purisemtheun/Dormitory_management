@@ -14,7 +14,7 @@ import RoomInfoPage from "../pages/tenant/RoomInfoPage.jsx";
 // Admin layout + pages
 import AdminLayout from "../layouts/admin/AdminLayout.jsx";
 import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage.jsx";
-import AdminTenantsPage from "../pages/admin/AdminTenantsPage.jsx";
+import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage.jsx";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage.jsx";
 
 export const router = createBrowserRouter([
@@ -47,7 +47,10 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="rooms" replace /> },
       { path: "rooms", element: <AdminRoomsManagePage /> },
-      { path: "tenants", element: <AdminTenantsPage /> }, // ✅ ใช้ตัวเดียว ไม่ซ้ำ
+      {
+  path: '/admin/tenants',
+  element: <AdminTenantsManagePage />
+}
     ]
   },
   {

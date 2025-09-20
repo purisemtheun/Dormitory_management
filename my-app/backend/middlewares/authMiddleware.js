@@ -1,26 +1,32 @@
 // middlewares/authMiddleware.js
 const jwt = require('jsonwebtoken');
 
-// ดึง Bearer token ให้ทนเคส "Bearer a, Bearer b" และมี " ครอบ
+/** ดึง Bearer token จาก header (รองรับหลายค่า/มี quote/ตัวพิมพ์เล็กใหญ่ต่างกัน) */
 function extractBearerToken(authHeader = '') {
-  const parts = authHeader.split(',').map(s => s.trim());
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const m = /^Bearer\s+(.+)$/.exec(parts[i]);
-    if (!m) continue;
-    const token = m[1].replace(/^"+|"+$/g, '').trim();
-    if (token.split('.').length === 3) return token; // รูปแบบ JWT 3 ส่วน
-  }
-  return null;
+  return authHeader
+    .split(',')
+    .map(s => s.trim())
+    .reverse()
+    .map(s => {
+      const m = /^Bearer\s+(.+)$/i.exec(s);      // i = ไม่แคร์พิมพ์เล็กใหญ่
+      if (!m) return null;
+      const tok = m[1].replace(/^"+|"+$/g, '').trim();
+      return tok && tok.split('.').length === 3 ? tok : null; // โครง JWT 3 ส่วน
+    })
+    .find(Boolean) || null;
 }
 
-exports.verifyToken = (req, res, next) => {
+function verifyToken(req, res, next) {
   const token = extractBearerToken(req.headers.authorization);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized', code: 'NO_TOKEN' });
   }
-
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    // ถ้าแน่ใจว่า sign ด้วย HS256 เสมอคงค่า algorithms ได้
+    // แต่ถ้าไม่แน่ใจ ให้ลบ options ออก เพื่อไม่ให้ verify ล้มเพราะ alg ไม่ตรง
+    // const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload; // { id, role, ... }
     return next();
   } catch (err) {
     const codeMap = {
@@ -30,12 +36,17 @@ exports.verifyToken = (req, res, next) => {
     };
     return res.status(401).json({ error: err.message, code: codeMap[err.name] || 'VERIFY_FAIL' });
   }
-};
+}
 
-exports.authorizeRoles = (...roles) => (req, res, next) => {
-  if (!req.user || !roles.includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
-  }
-  next();
-};
+function authorizeRoles(...roles) {
+  return (req, res, next) => {
+    const role = req.user && req.user.role;
+    if (!role || !roles.includes(role)) {
+      return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
+    }
+    next();
+  };
+}
 
+// ✅ export แบบชัดเจน เพื่อเลี่ยงปัญหาบางกรณีของ exports / module.exports
+module.exports = { verifyToken, authorizeRoles };
