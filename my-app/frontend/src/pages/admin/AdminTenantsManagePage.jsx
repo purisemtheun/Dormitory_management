@@ -88,23 +88,22 @@ export default function AdminTenantsManagePage() {
     });
   };
 
-  // 🟢 NEW: บันทึกแก้ไข
-  const saveEdit = async () => {
-    if (!editing) return;
-    try {
-      // คีย์จริงในตารางใช้ tenant_id (อย่าสับสนกับ tenant_code)
-      await tenantApi.update(editing.tenant_id, {
-        name: editForm.name.trim(),
-        phone: editForm.phone.trim() || null,
-        room_id: editForm.room_id.trim(),
-        checkin_date: editForm.checkin_date || null,
-      });
-      setEditing(null);
-      await load(q);
-    } catch (e) {
-      alert(e.message || "อัปเดตไม่สำเร็จ");
-    }
-  };
+ const saveEdit = async () => {
+  if (!editing) return;
+  try {
+    await tenantApi.update(editing.tenant_id, {
+      name: editForm.name.trim(),
+      phone: editForm.phone.trim() || null,
+      room_id: editForm.room_id === "" ? null : editForm.room_id,
+      checkin_date: editForm.checkin_date || null,
+    });
+    setEditing(null); // ปิด editor
+    await load(q);    // โหลดใหม่
+  } catch (e) {
+    alert(e?.response?.data?.error || e.message);
+  }
+};
+
 
   // 🟢 NEW: ลบผู้เช่า
   const onDelete = async (r) => {

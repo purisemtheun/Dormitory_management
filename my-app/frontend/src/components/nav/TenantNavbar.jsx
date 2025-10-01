@@ -1,39 +1,42 @@
 import React from "react";
-import { Link, NavLink } from "react-router-dom";
-import LogoutButton from "./LogoutButton";
+import { NavLink, useNavigate } from "react-router-dom";
+import { clearToken } from "../../utils/auth";
 
 export default function TenantNavbar() {
+  const navigate = useNavigate();
+  const linkClass = ({ isActive }) => "tn-link" + (isActive ? " active" : "");
+
+  const onLogout = () => {
+    clearToken();
+    navigate("/login", { replace: true });
+  };
+
   return (
-    <header className="tn-navbar">
+    <nav className="tn-navbar">
       <div className="tn-wrap">
-        {/* ซ้าย: แบรนด์ + เมนู */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <Link to="/tenant" className="tn-brand">ระบบจัดการหอพัก</Link>
-          <nav className="tn-links">
-            <NavLink
-              to="/tenant/room"
-              className={({ isActive }) => `tn-link${isActive ? " active" : ""}`}
-            >
-              ห้องพัก
-            </NavLink>
-            <NavLink
-              to="/tenant/repairs"
-              className={({ isActive }) => `tn-link${isActive ? " active" : ""}`}
-            >
-              แจ้งซ่อม
-            </NavLink>
-            <NavLink
-              to="/tenant/payments"
-              className={({ isActive }) => `tn-link${isActive ? " active" : ""}`}
-            >
-              ชำระเงิน
-            </NavLink>
-          </nav>
+        {/* ซ้าย: แบรนด์ + เมนู (ใช้คลาสเดิมทั้งหมด) */}
+        <div className="tn-links" style={{ gap: 18 }}>
+          <NavLink to="/tenant" end className="tn-brand">
+            ระบบจัดการหอพัก
+          </NavLink>
+          <NavLink to="/tenant" end className={linkClass}>
+            ห้องพัก
+          </NavLink>
+          <NavLink to="/tenant/repairs" className={linkClass}>
+            แจ้งซ่อม
+          </NavLink>
+          <NavLink to="/tenant/payments" className={linkClass}>
+            ชำระเงิน
+          </NavLink>
         </div>
 
-        {/* ขวา: Logout */}
-        <LogoutButton className="tn-link" />
+        {/* ขวา: ปุ่มออกจากระบบ (ใช้ .btn-outline เดิมของคุณ) */}
+        <div>
+          <button className="btn btn-outline" onClick={onLogout}>
+            ออกจากระบบ
+          </button>
+        </div>
       </div>
-    </header>
+    </nav>
   );
 }

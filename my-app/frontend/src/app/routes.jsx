@@ -1,94 +1,66 @@
+import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
-import LoginPage from "../pages/auth/LoginPage.jsx";
-import RegisterPage from "../pages/auth/RegisterPage.jsx";
+// layouts
+import AdminLayout from "../layouts/admin/AdminLayout";
+import TenantLayout from "../layouts/tenant/TenantLayout";
 
-import RequireAuth from "./RequireAuth.jsx";
-import RequireRole from "./RequireRole.jsx";
+// pages (auth)
+import LoginPage from "../pages/auth/LoginPage";
+import RegisterPage from "../pages/auth/RegisterPage";
 
-import TenantPage from "../pages/tenant/TenantPage.jsx";
-//import AdminPage from "../pages/admin/AdminPage.jsx";
-import TechPage from "../pages/tech/TechPage.jsx";
-import RoomInfoPage from "../pages/tenant/RoomInfoPage.jsx";
+// pages (admin)
+import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage";
+import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
+import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
 
-// Admin layout + pages
-import AdminLayout from "../layouts/admin/AdminLayout.jsx";
-import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage.jsx";
-import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage.jsx";
-import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage.jsx";
+// pages (tenant)
+import RoomInfoPage from "../pages/tenant/RoomInfoPage";
+import PaymentPage from "../pages/tenant/PaymentPage";
+import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
 
-export const router = createBrowserRouter([
+import { getToken } from "../utils/auth";
+
+const RequireAuth = ({ children }) =>
+  (getToken() ? children : <Navigate to="/login" replace />);
+
+const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
 
-  // public
   { path: "/login", element: <LoginPage /> },
   { path: "/register", element: <RegisterPage /> },
 
-  // dashboards
   {
     path: "/tenant",
     element: (
       <RequireAuth>
-        <RequireRole roles={["tenant"]}>
-          <TenantPage />
-        </RequireRole>
+        <TenantLayout />
       </RequireAuth>
     ),
+    children: [
+      { index: true, element: <RoomInfoPage /> },
+      { path: "repairs", element: <TenantRepairCreatePage /> },
+      { path: "payments", element: <PaymentPage /> },
+    ],
   },
+
   {
     path: "/admin",
     element: (
       <RequireAuth>
-        <RequireRole roles={["admin"]}>
-          <AdminLayout />
-        </RequireRole>
+        <AdminLayout />
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="rooms" replace /> },
+      // 👉 ทำให้กด /admin แล้วมีหน้าเริ่มต้น (เปลี่ยนเป้าหมายได้ตามต้องการ)
+      { index: true, element: <Navigate to="/admin/rooms" replace /> },
+
       { path: "rooms", element: <AdminRoomsManagePage /> },
-      {
-  path: '/admin/tenants',
-  element: <AdminTenantsManagePage />
-}
-    ]
-  },
-  {
-    path: "/tech",
-    element: (
-      <RequireAuth>
-        <RequireRole roles={["technician"]}> {/* ✅ เปลี่ยนจาก "tech" เป็น "technician" */}
-          <TechPage />
-        </RequireRole>
-      </RequireAuth>
-    ),
+      { path: "tenants", element: <AdminTenantsManagePage /> },
+      { path: "payments", element: <AdminPaymentsPage /> },
+    ],
   },
 
-  // tenant – room info
-  {
-    path: "/tenant/room",
-    element: (
-      <RequireAuth>
-        <RequireRole roles={["tenant"]}>
-          <RoomInfoPage />
-        </RequireRole>
-      </RequireAuth>
-    ),
-  },
-
-  // tenant – create repair (ฟอร์มแจ้งซ่อม)
-  {
-    path: "/tenant/repairs",
-    element: (
-      <RequireAuth>
-        <RequireRole roles={["tenant"]}>
-          <TenantRepairCreatePage />
-        </RequireRole>
-      </RequireAuth>
-    ),
-  },
-
-  // fallback
   { path: "*", element: <Navigate to="/login" replace /> },
 ]);
 

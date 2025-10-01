@@ -5,6 +5,7 @@
 // - tenant_id ใช้รูปแบบ 'T0001', 'T0002', ... (สร้างเองในการ INSERT)
 // - room_id เริ่มเป็น NULL (ยังไม่ผูกห้อง) และจะไปอัปเดตตอน "book room"
 // - รองรับการค้นหาแบบ exact ด้วย tenant_code (T0001) และค้นหาด้วยชื่อ (LIKE)
+// - ใช้ Soft Delete ผ่านคอลัมน์ is_deleted (0 = ปกติ, 1 = ถูกลบ)
 // =====================================================
 
 const db = require('../config/db');
@@ -31,38 +32,46 @@ const codeExpr =
 
 // -----------------------------------------------------
 // GET /api/admin/tenants?q=...
-// - q = 'T0001'   -> ค้นหา exact เพียงคนเดียว
-// - q = 'สมชาย'  -> ค้นหาจากชื่อแบบ LIKE
-// - q ว่าง        -> คืนทั้งหมด
+// - แสดงผู้เช่า "ล่าสุดต่อคน" แค่ 1 แถว (ให้ความสำคัญกับแถวที่ room_id ไม่ว่าง > วันที่ใหม่สุด > tenant_id มากสุด)
+// - รองรับค้นหาทั้งรหัส T0001 (exact) หรือชื่อ (LIKE)
+// - กรองเฉพาะที่ is_deleted = 0
 // -----------------------------------------------------
 async function listTenants(req, res, next) {
   try {
     const q = (req.query.q || '').trim();
-    let sql = `
-      SELECT
-        ${codeExpr} AS tenant_code,
-        t.tenant_id,      -- คีย์จริง ใช้สำหรับ PATCH/DELETE
-        t.user_id,
-        u.name,
-        u.phone,
-        t.room_id,
-        t.checkin_date
-      FROM tenants t
-      JOIN users u ON u.id = t.user_id
-    `;
+
+    const sql =
+      "SELECT " +
+      `  ${codeExpr} AS tenant_code, ` +
+      "  t.tenant_id, t.user_id, u.name, u.phone, t.room_id, t.checkin_date " +
+      "FROM tenants t " +
+      "JOIN users u ON u.id = t.user_id " +
+      "JOIN ( " +
+      "  SELECT x.user_id, " +
+      "         MAX(CONCAT( " +
+      "           CASE WHEN x.room_id IS NOT NULL AND x.room_id <> '' THEN '1' ELSE '0' END, '|', " +
+      "           COALESCE(DATE_FORMAT(x.checkin_date, '%Y%m%d'), '00000000'), '|', " +
+      "           LPAD(CAST(REPLACE(x.tenant_id,'T','') AS UNSIGNED), 10, '0') " +
+      "         )) AS selkey " +
+      "  FROM tenants x " +
+      "  WHERE x.is_deleted = 0 " + // ✅ กรองลบออก
+      "  GROUP BY x.user_id " +
+      ") pick ON pick.user_id = t.user_id " +
+      "       AND CONCAT( " +
+      "             CASE WHEN t.room_id IS NOT NULL AND t.room_id <> '' THEN '1' ELSE '0' END, '|', " +
+      "             COALESCE(DATE_FORMAT(t.checkin_date, '%Y%m%d'), '00000000'), '|', " +
+      "             LPAD(CAST(REPLACE(t.tenant_id,'T','') AS UNSIGNED), 10, '0') " +
+      "           ) = pick.selkey " +
+      "WHERE t.is_deleted = 0 " + // ✅ กรองลบออก
+      ( /^T\d{4}$/i.test(q)
+          ? "AND CONCAT('T', LPAD(CAST(REPLACE(t.tenant_id,'T','') AS UNSIGNED), 4, '0')) = ? "
+          : (q ? "AND u.name LIKE ? " : "")
+      ) +
+      "ORDER BY t.tenant_id DESC";
+
     const params = [];
-
-    if (/^T\d{4}$/i.test(q)) {
-      // ค้นหาด้วย tenant_code แบบตรงตัว (ไม่สนพิมพ์เล็กใหญ่)
-      sql += ` WHERE ${codeExpr} = ? `;
-      params.push(q.toUpperCase());
-    } else if (q) {
-      // ค้นหาด้วยชื่อ (ส่วนมากใช้ภาษาไทย)
-      sql += ` WHERE u.name LIKE ? `;
-      params.push(`%${q}%`);
-    }
-
-    sql += ` ORDER BY t.tenant_id DESC`;
+    if (/^T\d{4}$/i.test(q)) params.push(q.toUpperCase());
+    else if (q) params.push(`%${q}%`);
 
     const [rows] = await db.query(sql, params);
     res.json(rows);
@@ -74,9 +83,8 @@ async function listTenants(req, res, next) {
 // -----------------------------------------------------
 // POST /api/admin/tenants
 // body: { name (required), phone?, checkin_date? }
-// หมายเหตุ:
-//   - ไม่ต้องมี email (เราจะเก็บเป็น NULL ได้)
-//   - จะสร้าง users (role='tenant') และแถว tenants โดย room_id = NULL
+// - ไม่ต้องมี email (NULL ได้)
+// - จะสร้าง users (role='tenant') และแถว tenants โดย room_id = NULL
 // -----------------------------------------------------
 async function createTenant(req, res, next) {
   try {
@@ -95,10 +103,10 @@ async function createTenant(req, res, next) {
     );
     const userId = uIns.insertId;
 
-    // สร้าง tenant_id ใหม่ แล้ว INSERT แถว tenants โดย room_id = NULL
+    // สร้าง tenant_id ใหม่ แล้ว INSERT แถว tenants โดย room_id = NULL, is_deleted = 0
     const tenantId = await makeTenantId();
     await db.query(
-      'INSERT INTO tenants (tenant_id, user_id, room_id, checkin_date) VALUES (?,?,NULL,?)',
+      'INSERT INTO tenants (tenant_id, user_id, room_id, checkin_date, is_deleted) VALUES (?,?,NULL,?,0)',
       [tenantId, userId, checkin_date || null]
     );
 
@@ -117,22 +125,24 @@ async function createTenant(req, res, next) {
 
 // -----------------------------------------------------
 // PATCH /api/admin/tenants/:id
-// - id = tenant_id (คีย์จริงในตาราง tenants)
+// - id = tenant_id
 // - body รองรับอัปเดตบางฟิลด์: name, phone (users), room_id, checkin_date (tenants)
-// - หมายเหตุ: ปกติ room_id ควรอัปเดตผ่าน flow "book room" ที่ rooms controller
 // -----------------------------------------------------
 async function updateTenant(req, res, next) {
   try {
     const id = req.params.id; // tenant_id
-    const { name, phone, room_id, checkin_date } = req.body;
+    let { name, phone, room_id, checkin_date } = req.body;
 
-    // หา user_id ก่อนเพื่ออัปเดตตาราง users
-    const [[t]] = await db.query('SELECT user_id FROM tenants WHERE tenant_id = ?', [id]);
+    // หา user_id ก่อนเพื่ออัปเดตตาราง users และเช็คว่า tenant ยังไม่ถูกลบ
+    const [[t]] = await db.query(
+      'SELECT user_id FROM tenants WHERE tenant_id = ? AND is_deleted = 0',
+      [id]
+    );
     if (!t) {
       return res.status(404).json({ error: 'Tenant not found', code: 'TENANT_NOT_FOUND' });
     }
 
-    // อัปเดตชื่อ/เบอร์ในตาราง users ถ้าส่งมา
+    // 1) อัปเดต users
     if (name != null || phone != null) {
       await db.query(
         'UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone) WHERE id = ?',
@@ -140,12 +150,43 @@ async function updateTenant(req, res, next) {
       );
     }
 
-    // อัปเดต room_id/checkin_date ในตาราง tenants ถ้าส่งมา
-    // (ถ้าอยากจำกัดให้แก้ room_id ผ่าน endpoint book-room เท่านั้น ให้ตัดส่วนนี้ทิ้ง)
-    if (room_id !== undefined || checkin_date !== undefined) {
+    // 2) เตรียมค่าปกติของ room_id / checkin_date
+    // - ถ้า body ไม่ส่ง field มาเลย -> ไม่แตะฟิลด์นั้น
+    // - ถ้าส่ง "" (ค่าว่าง) -> ตั้งเป็น NULL เพื่อให้ผ่าน FK
+    const wantUpdateRoom = room_id !== undefined;
+    const wantUpdateCheckin = checkin_date !== undefined;
+
+    const roomIdNormalized =
+      room_id === undefined ? undefined : (room_id === '' ? null : room_id);
+
+    const checkinNormalized =
+      checkin_date === undefined ? undefined :
+      (checkin_date === '' ? null : checkin_date);
+
+    // 3) ถ้า room_id ตั้งค่ามา (ไม่ใช่ undefined) และไม่ใช่ NULL -> ต้องมีอยู่จริงใน rooms
+    if (wantUpdateRoom && roomIdNormalized !== null) {
+      const [[r]] = await db.query('SELECT room_id FROM rooms WHERE room_id = ?', [roomIdNormalized]);
+      if (!r) {
+        return res.status(400).json({
+          error: 'Invalid room_id: room does not exist',
+          code: 'ROOM_NOT_FOUND'
+        });
+      }
+    }
+
+    // 4) สร้าง SQL อัปเดตเฉพาะฟิลด์ที่ต้องการ
+    if (wantUpdateRoom || wantUpdateCheckin) {
       await db.query(
-        'UPDATE tenants SET room_id = COALESCE(?, room_id), checkin_date = COALESCE(?, checkin_date) WHERE tenant_id = ?',
-        [room_id ?? null, checkin_date ?? null, id]
+        'UPDATE tenants SET ' +
+          (wantUpdateRoom ? 'room_id = ?, ' : '') +
+          (wantUpdateCheckin ? 'checkin_date = ?, ' : '') +
+          'tenant_id = tenant_id ' + // no-op เพื่อจัดคอมม่าได้ง่าย
+          'WHERE tenant_id = ? AND is_deleted = 0',
+        [
+          ...(wantUpdateRoom ? [roomIdNormalized] : []),
+          ...(wantUpdateCheckin ? [checkinNormalized] : []),
+          id
+        ]
       );
     }
 
@@ -155,20 +196,31 @@ async function updateTenant(req, res, next) {
   }
 }
 
+
 // -----------------------------------------------------
 // DELETE /api/admin/tenants/:id
-// - id = tenant_id
+// - Soft delete: is_deleted = 1 (หลีกเลี่ยงปัญหา FK กับ repairs)
 // -----------------------------------------------------
-async function deleteTenant(req, res, next) {
+async function deleteTenant(req, res) {
   try {
-    const id = req.params.id;
-    const [ret] = await db.query('DELETE FROM tenants WHERE tenant_id = ?', [id]);
+    const { id } = req.params;
+
+    const [ret] = await db.query(
+      'UPDATE tenants SET is_deleted = 1 WHERE tenant_id = ? AND is_deleted = 0',
+      [id]
+    );
+
     if (ret.affectedRows === 0) {
-      return res.status(404).json({ error: 'Tenant not found', code: 'TENANT_NOT_FOUND' });
+      return res.status(404).json({
+        error: 'Tenant not found or already deleted',
+        code: 'TENANT_NOT_FOUND',
+      });
     }
-    res.json({ message: 'deleted' });
-  } catch (e) {
-    next(e);
+
+    res.json({ message: 'ลบผู้เช่าสำเร็จ (soft delete)' });
+  } catch (err) {
+    console.error('deleteTenant error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 }
 

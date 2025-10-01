@@ -53,7 +53,7 @@ export default function AdminRoomsManagePage() {
   const load = async () => {
     setLoading(true); setErr("");
     try {
-      const data = await roomApi.list(); // GET /api/rooms
+      const data = await roomApi.list(); // GET /api/rooms (admin only)
       setRows(Array.isArray(data) ? data : []);
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
@@ -88,7 +88,7 @@ export default function AdminRoomsManagePage() {
         room_id: createForm.room_id.trim(),
         room_number: createForm.room_number.trim(),
         price: createForm.price || null,
-        status: createForm.status || "vacant", // ✅ ส่งเป็นโค้ด
+        status: createForm.status || "vacant",
         has_fan: createForm.has_fan,
         has_aircon: createForm.has_aircon,
         has_fridge: createForm.has_fridge,
@@ -115,7 +115,7 @@ export default function AdminRoomsManagePage() {
     setEditForm({
       room_number: r.room_number || "",
       price: r.price ?? "",
-      status: r.status || "vacant", // 
+      status: r.status || "vacant",
       has_fan: !!r.has_fan,
       has_aircon: !!r.has_aircon,
       has_fridge: !!r.has_fridge,
@@ -126,7 +126,7 @@ export default function AdminRoomsManagePage() {
       await roomApi.update(editingId, {
         room_number: editForm.room_number,
         price: editForm.price,
-        status: editForm.status, //
+        status: editForm.status,
         has_fan: editForm.has_fan,
         has_aircon: editForm.has_aircon,
         has_fridge: editForm.has_fridge,
@@ -241,8 +241,8 @@ export default function AdminRoomsManagePage() {
                       className="checkbox"
                       checked={createForm.has_fan}
                       onChange={(e) => setCreateForm((p) => ({ ...p, has_fan: e.target.checked }))}
-                    />{" "}
-                    พัดลม
+                    />
+                    <span style={{ marginLeft: 6 }}>พัดลม</span>
                   </label>
                   <label>
                     <input
@@ -250,8 +250,8 @@ export default function AdminRoomsManagePage() {
                       className="checkbox"
                       checked={createForm.has_aircon}
                       onChange={(e) => setCreateForm((p) => ({ ...p, has_aircon: e.target.checked }))}
-                    />{" "}
-                    แอร์
+                    />
+                    <span style={{ marginLeft: 6 }}>แอร์</span>
                   </label>
                   <label>
                     <input
@@ -259,8 +259,8 @@ export default function AdminRoomsManagePage() {
                       className="checkbox"
                       checked={createForm.has_fridge}
                       onChange={(e) => setCreateForm((p) => ({ ...p, has_fridge: e.target.checked }))}
-                    />{" "}
-                    ตู้เย็น
+                    />
+                    <span style={{ marginLeft: 6 }}>ตู้เย็น</span>
                   </label>
                 </div>
               </div>
@@ -295,30 +295,30 @@ export default function AdminRoomsManagePage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="7">กำลังโหลด...</td></tr>
+                <tr><td colSpan={7}>กำลังโหลด...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan="7">ไม่พบข้อมูล</td></tr>
+                <tr><td colSpan={7}>ไม่พบข้อมูล</td></tr>
               ) : (
-                filtered.map((r, idx) => {
+                filtered.flatMap((r, idx) => {
                   const isEdit = editingId === r.room_id;
                   const occupied = r.status === "occupied";
-                  return (
-                    <React.Fragment key={r.room_id}>
-                      <tr>
-                        <td>{idx + 1}</td>
-                        <td>
-                          {r.room_id} <span style={{ opacity: 0.6 }}>({r.room_number || "-"})</span>
-                        </td>
-                        <td>
-                          {r.has_fan ? "พัดลม • " : ""}
-                          {r.has_aircon ? "แอร์ • " : ""}
-                          {r.has_fridge ? "ตู้เย็น" : ""}
-                          {!r.has_fan && !r.has_aircon && !r.has_fridge ? "-" : ""}
-                        </td>
-                        <td>{currency(r.price)}</td>
-                        <td>{ROOM_STATUS_LABEL[r.status] || r.status}</td> {/* ✅ แสดงไทย */}
 
-                       {/* bind tenant */}
+                  const rowMain = (
+                    <tr key={r.room_id}>
+                      <td>{idx + 1}</td>
+                      <td>
+                        {r.room_id} <span style={{ opacity: 0.6 }}>({r.room_number || "-"})</span>
+                      </td>
+                      <td>
+                        {r.has_fan ? "พัดลม • " : ""}
+                        {r.has_aircon ? "แอร์ • " : ""}
+                        {r.has_fridge ? "ตู้เย็น" : ""}
+                        {!r.has_fan && !r.has_aircon && !r.has_fridge ? "-" : ""}
+                      </td>
+                      <td>{currency(r.price)}</td>
+                      <td>{ROOM_STATUS_LABEL[r.status] || r.status}</td>
+
+                      {/* bind tenant */}
                       <td>
                         <div style={{ display: "grid", gridTemplateColumns: "160px 170px auto", gap: 8 }}>
                           {/* userId */}
@@ -362,115 +362,115 @@ export default function AdminRoomsManagePage() {
                             </button>
                           </div>
                         </div>
-                              {occupied && <small className="muted">ห้องนี้มีผู้เช่าแล้ว</small>}
-                                </td>
+                        {occupied ? <small className="muted">ห้องนี้มีผู้เช่าแล้ว</small> : null}
+                      </td>
 
+                      {/* actions */}
+                      <td style={{ display: "flex", gap: 8 }}>
+                        <button className="btn btn-warning" onClick={() => startEdit(r)}>แก้ไข</button>
+                        <button className="btn btn-danger" onClick={() => removeRoom(r.room_id)}>ลบ</button>
+                      </td>
+                    </tr>
+                  );
 
-                        {/* actions */}
-                        <td style={{ display: "flex", gap: 8 }}>
-                          <button className="btn btn-warning" onClick={() => startEdit(r)}>แก้ไข</button>
-                          <button className="btn btn-danger" onClick={() => removeRoom(r.room_id)}>ลบ</button>
-                        </td>
-                      </tr>
-
-                      {/* inline editor */}
-                      {isEdit && (
-                        <tr>
-                          <td colSpan="7">
-                            <div className="ad-panel" style={{ marginTop: 12 }}>
-                              <div
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
-                                  gap: 8,
-                                }}
+                  const rowEditor = isEdit ? (
+                    <tr key={`edit-${r.room_id}`}>
+                      <td colSpan={7}>
+                        <div className="ad-panel" style={{ marginTop: 12 }}>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
+                              gap: 8,
+                            }}
+                          >
+                            <div>
+                              <label className="label">เลขห้อง</label>
+                              <input
+                                className="input"
+                                value={editForm.room_number}
+                                onChange={(e) =>
+                                  setEditForm((p) => ({ ...p, room_number: e.target.value }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="label">ราคา/เดือน</label>
+                              <input
+                                className="input"
+                                type="number"
+                                step="0.01"
+                                value={editForm.price}
+                                onChange={(e) =>
+                                  setEditForm((p) => ({ ...p, price: e.target.value }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="label">สถานะ</label>
+                              <select
+                                className="input"
+                                value={editForm.status}
+                                onChange={(e) =>
+                                  setEditForm((p) => ({ ...p, status: e.target.value }))
+                                }
                               >
-                                <div>
-                                  <label className="label">เลขห้อง</label>
+                                {STATUS_OPTIONS.map((o) => (
+                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div style={{ gridColumn: "1/-1" }}>
+                              <label className="label">สิ่งอำนวยความสะดวก</label>
+                              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                <label>
                                   <input
-                                    className="input"
-                                    value={editForm.room_number}
+                                    type="checkbox"
+                                    className="checkbox"
+                                    checked={editForm.has_fan}
                                     onChange={(e) =>
-                                      setEditForm((p) => ({ ...p, room_number: e.target.value }))
+                                      setEditForm((p) => ({ ...p, has_fan: e.target.checked }))
                                     }
                                   />
-                                </div>
-                                <div>
-                                  <label className="label">ราคา/เดือน</label>
+                                  <span style={{ marginLeft: 6 }}>พัดลม</span>
+                                </label>
+                                <label>
                                   <input
-                                    className="input"
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.price}
+                                    type="checkbox"
+                                    className="checkbox"
+                                    checked={editForm.has_aircon}
                                     onChange={(e) =>
-                                      setEditForm((p) => ({ ...p, price: e.target.value }))
+                                      setEditForm((p) => ({ ...p, has_aircon: e.target.checked }))
                                     }
                                   />
-                                </div>
-                                <div>
-                                  <label className="label">สถานะ</label>
-                                  <select
-                                    className="input"
-                                    value={editForm.status}
+                                  <span style={{ marginLeft: 6 }}>แอร์</span>
+                                </label>
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    className="checkbox"
+                                    checked={editForm.has_fridge}
                                     onChange={(e) =>
-                                      setEditForm((p) => ({ ...p, status: e.target.value }))
+                                      setEditForm((p) => ({ ...p, has_fridge: e.target.checked }))
                                     }
-                                  >
-                                    {STATUS_OPTIONS.map((o) => (
-                                      <option key={o.value} value={o.value}>{o.label}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <div style={{ gridColumn: "1/-1" }}>
-                                  <label className="label">สิ่งอำนวยความสะดวก</label>
-                                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                                    <label>
-                                      <input
-                                        type="checkbox"
-                                        className="checkbox"
-                                        checked={editForm.has_fan}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, has_fan: e.target.checked }))
-                                        }
-                                      />{" "}
-                                      พัดลม
-                                    </label>
-                                    <label>
-                                      <input
-                                        type="checkbox"
-                                        className="checkbox"
-                                        checked={editForm.has_aircon}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, has_aircon: e.target.checked }))
-                                        }
-                                      />{" "}
-                                      แอร์
-                                    </label>
-                                    <label>
-                                      <input
-                                        type="checkbox"
-                                        className="checkbox"
-                                        checked={editForm.has_fridge}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, has_fridge: e.target.checked }))
-                                        }
-                                      />{" "}
-                                      ตู้เย็น
-                                    </label>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                                <button className="btn" onClick={() => setEditingId(null)}>ยกเลิก</button>
-                                <button className="btn btn-primary" onClick={saveEdit}>บันทึก</button>
+                                  />
+                                  <span style={{ marginLeft: 6 }}>ตู้เย็น</span>
+                                </label>
                               </div>
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
+                          </div>
+
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button className="btn" onClick={() => setEditingId(null)}>ยกเลิก</button>
+                            <button className="btn btn-primary" onClick={saveEdit}>บันทึก</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null;
+
+                 
+                  return [rowMain, rowEditor].filter(Boolean);
                 })
               )}
             </tbody>
@@ -478,11 +478,11 @@ export default function AdminRoomsManagePage() {
         </div>
       </div>
 
-      {err && (
+      {err ? (
         <div className="ad-panel" style={{ marginTop: 12, background: "#ffecec", borderColor: "#f5a5a5" }}>
           {err}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

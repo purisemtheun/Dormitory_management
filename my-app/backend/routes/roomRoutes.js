@@ -1,14 +1,15 @@
-// backend/routes/roomRoutes.js
 const router = require('express').Router();
 const roomController = require('../controllers/roomController');
+const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware');
 
-// พื้นฐาน
-router.get('/',        roomController.listRooms);
-router.post('/',       roomController.createRoom);
-router.patch('/:id',   roomController.updateRoom);
-router.delete('/:id',  roomController.deleteRoom);
+// tenant ดูห้องของตัวเอง
+router.get('/mine', verifyToken, roomController.getMyRoom);
 
-// ✅ ผูกห้องให้ผู้เช่า
-router.post('/:id/book', roomController.bookRoomForTenant);
+// เฉพาะ admin/staff
+router.get('/',       verifyToken, authorizeRoles('admin','staff'), roomController.listRooms);
+router.post('/',      verifyToken, authorizeRoles('admin','staff'), roomController.createRoom);
+router.patch('/:id',  verifyToken, authorizeRoles('admin','staff'), roomController.updateRoom);
+router.delete('/:id', verifyToken, authorizeRoles('admin','staff'), roomController.deleteRoom);
+router.post('/:id/book', verifyToken, authorizeRoles('admin','staff'), roomController.bookRoomForTenant);
 
 module.exports = router;
