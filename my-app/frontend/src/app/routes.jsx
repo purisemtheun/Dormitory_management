@@ -1,28 +1,32 @@
+// frontend/src/app/routes.jsx
 import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
-// layouts
 import AdminLayout from "../layouts/admin/AdminLayout";
 import TenantLayout from "../layouts/tenant/TenantLayout";
 
-// pages (auth)
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 
-// pages (admin)
 import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
 import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
+import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage"; // <-- เพิ่มนำเข้า
 
-// pages (tenant)
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
 
-import { getToken } from "../utils/auth";
+import { getToken, getRole } from "../utils/auth";
 
 const RequireAuth = ({ children }) =>
   (getToken() ? children : <Navigate to="/login" replace />);
+
+const RequireAdmin = ({ children }) => {
+  const role = getRole();
+  const ok = role === "admin" || role === "staff";
+  return ok ? children : <Navigate to="/login" replace />;
+};
 
 const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
@@ -48,16 +52,26 @@ const router = createBrowserRouter([
     path: "/admin",
     element: (
       <RequireAuth>
-        <AdminLayout />
+        <RequireAdmin>
+          <AdminLayout />
+        </RequireAdmin>
       </RequireAuth>
     ),
     children: [
-      // 👉 ทำให้กด /admin แล้วมีหน้าเริ่มต้น (เปลี่ยนเป้าหมายได้ตามต้องการ)
       { index: true, element: <Navigate to="/admin/rooms" replace /> },
-
       { path: "rooms", element: <AdminRoomsManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
-      { path: "payments", element: <AdminPaymentsPage /> },
+
+      // payments เป็น parent route ที่มี child route "issue"
+      {
+        path: "payments",
+        element: <AdminPaymentsPage />,
+        children: [
+          { path: "issue", element: <AdminInvoiceCreatePage /> }, // /admin/payments/issue
+        ],
+      },
+
+      // (ไม่ต้องเพิ่ม /admin/payments/issue เดียวอีกทีข้างนอก)
     ],
   },
 

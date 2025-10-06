@@ -365,3 +365,142 @@ select.input { appearance: none; background-position: right .75rem center; backg
   background: #fff;
   object-fit: contain;
 }
+
+.ad-submenu { display: flex; flex-direction: column; padding-left: 8px; }
+.ad-sublink { color: #374151; text-decoration: none; }
+.ad-sublink.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
+.ad-link.clickable { cursor: pointer; }
+.btn-logout { background: transparent; }
+
+/* ===== Admin Sidebar — Scoped overrides (only for sidebar/menu) =====
+   Put this at the end of your main CSS or in a file imported after main
+======================================================================*/
+
+/* กำหนดตัวแปรสีเฉพาะส่วน sidebar (ปรับค่านี้ถ้าต้องการโทนอื่น) */
+:root {
+  --sb-bg-start: #0f172a;   /* top */
+  --sb-bg-end:   #0b1220;   /* bottom */
+  --sb-text:     #f8fafc;   /* main text (very light) */
+  --sb-muted:    #c7d2fe;   /* muted/labels */
+  --sb-hover:    rgba(255,255,255,0.04);
+  --sb-active-bg: rgba(79,70,229,0.16); /* indigo translucent */
+  --sb-active-border: #4f46e5; /* indigo-600 */
+  --sb-sublink-bg: transparent;
+  --sb-sublink-hover: rgba(255,255,255,0.06);
+}
+
+/* Sidebar container */
+.ad-sidebar {
+  background: linear-gradient(180deg, var(--sb-bg-start), var(--sb-bg-end));
+  color: var(--sb-text);
+  width: 280px;               /* เพิ่มความกว้างเล็กน้อย */
+  min-height: 100vh;          /* ยาวเต็มหน้าจอ */
+  padding: 18px 14px;
+  box-shadow: none;
+  border-right: 1px solid rgba(255,255,255,0.02); /* subtle divider */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Brand */
+.ad-brand {
+  color: var(--sb-text);
+  font-weight: 800;
+  display: block;
+  padding: 8px 6px;
+}
+
+/* group label (muted) */
+.ad-label {
+  color: var(--sb-muted);
+  font-size: .85rem;
+  margin: 10px 6px;
+}
+
+/* main links */
+.ad-link {
+  display:block;
+  text-decoration:none;
+  color: var(--sb-text);
+  padding:10px 12px;
+  border-radius:10px;
+  margin: 6px 0;
+  background: transparent;      /* ให้โปร่ง (ไม่ไปกระทบหน้าอื่น) */
+  border: none;                 /* ลบเส้น border เดิม เพื่อความสะอาด */
+  transition: background .12s, transform .06s, color .12s;
+  cursor: pointer;
+}
+
+/* hover/active main link */
+.ad-link:hover {
+  background: var(--sb-hover);
+  color: var(--sb-text);
+  transform: translateY(-1px);
+}
+.ad-link.active {
+  background: var(--sb-active-bg);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 2px rgba(79,70,229,0.06);
+  border-left: 4px solid var(--sb-active-border); /* emphasis */
+  padding-left: 10px; /* compensate for border */
+}
+
+/* section wrapper (payments dropdown) */
+.ad-section { margin-top: 8px; }
+
+/* submenu (indented) */
+.ad-submenu {
+  display: flex;
+  flex-direction: column;
+  padding-left: 8px;
+  margin-top: 8px;
+}
+
+/* submenu links */
+.ad-sublink {
+  color: var(--sb-text);
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: var(--sb-sublink-bg);
+  transition: background .12s, color .12s;
+  font-size: 0.95rem;
+}
+
+/* submenu hover & active */
+.ad-sublink:hover {
+  background: var(--sb-sublink-hover);
+  color: #ffffff;
+}
+.ad-sublink.active {
+  background: var(--sb-active-bg);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(79,70,229,0.06);
+}
+
+/* Logout button (bottom area) */
+.btn-logout {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--sb-text);
+  border: 1px solid rgba(255,255,255,0.06);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.btn-logout:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+/* Small tweak: ensure submenu items don't change layout elsewhere */
+.ad-nav, .ad-group { gap: 10px; }
+
+/* Responsive: ถ้าจอเล็ก ให้ sidebar เอาเป็นความกว้างน้อยลง */
+@media (max-width: 900px) {
+  .ad-sidebar { width: 220px; position: relative; height: auto; }
+}
+

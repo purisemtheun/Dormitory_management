@@ -1,7 +1,6 @@
 // backend/controllers/paymentController.js
 const path = require('path');
 const db = require('../config/db');
-const { slipUpload } = require('../middlewares/upload');
 
 // ===== Helper: หา tenant_id ของ user ปัจจุบัน =====
 async function getTenantIdByUser(userId) {
@@ -41,7 +40,7 @@ async function getMyLastInvoices(req, res) {
          paid_at,
          slip_url,
          CASE
-           WHEN status <> 'paid' AND CURDATE() > due_date THEN 'overdue'
+           WHEN status <> 'paid' AND due_date IS NOT NULL AND CURDATE() > due_date THEN 'overdue'
            ELSE status
          END AS effective_status
        FROM invoices
@@ -70,9 +69,8 @@ async function getActiveQR(_req, res) {
     );
     if (!row) return res.json(null);
 
-    // qr_path แนะนำเก็บแบบ 'qrs/xxx.jpg' → เสิร์ฟผ่าน /uploads แล้ว
-    const norm = row.qr_path.replace(/^\/+/, '');
-    row.qr_url = `/uploads/${norm}`;
+    const norm = String(row.qr_path || '').replace(/^\/+/, '');
+    row.qr_url = `/uploads/${norm}`; // เสิร์ฟจาก /uploads
     res.json(row);
   } catch (e) {
     console.error('getActiveQR error:', e);
@@ -89,7 +87,7 @@ async function submitPayment(req, res) {
 
     const { invoice_id, amount_paid, transfer_date, note } = req.body;
     if (!invoice_id) return res.status(400).json({ error: 'ระบุ invoice_id' });
-    if (!req.file)   return res.status(400).json({ error: 'กรุณาแนบไฟล์สลิป' });
+    if (!req.file)   return res.status(400).json({ error: "กรุณาแนบไฟล์สลิป (field ต้องชื่อ 'slip')" });
 
     const tenantId = await getTenantIdByUser(userId);
     if (!tenantId) return res.status(400).json({ error: 'ไม่พบ tenant ของผู้ใช้' });
@@ -102,12 +100,11 @@ async function submitPayment(req, res) {
       return res.status(400).json({ error: 'บิลไม่ถูกต้อง' });
     }
 
-    // สร้าง path/URL ของสลิป
+    // ตั้ง URL เสิร์ฟสลิป (static /uploads)
     const filename = req.file.filename || path.basename(req.file.path);
-    const slip_path = `slips/${filename}`;
-    const slip_url = slipUpload.toPublicUrl(filename); // => /uploads/slips/<filename>
+    const slip_url = `/uploads/slips/${filename}`;
 
-    // (ถ้ามีตาราง payments แยก) บันทึกประวัติการส่งสลิป
+    // (ถ้ามีตาราง payments แยก) บันทึกประวัติ
     try {
       await db.query(
         `INSERT INTO payments
@@ -118,15 +115,13 @@ async function submitPayment(req, res) {
           tenantId,
           amount_paid ?? null,
           transfer_date ?? null,
-          slip_path,
+          `slips/${filename}`,
           note || null,
         ]
       );
-    } catch (_) {
-      // ถ้าไม่มีตาราง payments ให้ข้ามได้ (ไม่ throw)
-    }
+    } catch (_) { /* ไม่มีตารางก็ข้าม */ }
 
-    // อัปเดตใบแจ้งหนี้เป็นรอตรวจสอบ + เก็บ URL รูปไว้ที่ใบแจ้งหนี้ด้วย
+    // อัปเดตที่ invoices
     await db.query(
       `UPDATE invoices
           SET status='pending',

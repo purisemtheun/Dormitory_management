@@ -1,8 +1,8 @@
+// frontend/src/layouts/admin/AdminLayout.jsx
 import React from "react";
 import { Outlet } from "react-router-dom";
 import AdminSidebar from "../../components/admin/AdminSidebar";
 
-console.log("AdminSidebar loaded");
 export default function AdminLayout() {
   return (
     <div className="ad-shell">
