@@ -5,13 +5,20 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import AdminLayout from "../layouts/admin/AdminLayout";
 import TenantLayout from "../layouts/tenant/TenantLayout";
 
+// Technician (ถ้ามีไฟล์ตามที่แนะนำ)
+import TechnicianLayout from "../layouts/technician/TechnicianLayout";
+import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
+
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 
 import AdminRoomsManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
+import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";
+import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
+
+// หน้าอนุมัติการชำระเงินของแอดมิน
 import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
-import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage"; // <-- เพิ่มนำเข้า
 
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
@@ -19,6 +26,7 @@ import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
 
 import { getToken, getRole } from "../utils/auth";
 
+/* ============== Guards ============== */
 const RequireAuth = ({ children }) =>
   (getToken() ? children : <Navigate to="/login" replace />);
 
@@ -28,12 +36,20 @@ const RequireAdmin = ({ children }) => {
   return ok ? children : <Navigate to="/login" replace />;
 };
 
+// ถ้าคุณยังไม่มี role "technician" ให้คอมเมนต์ guard นี้กับเส้นทาง /technician ชั่วคราวได้
+const RequireTechnician = ({ children }) => {
+  const role = getRole();
+  return role === "technician" ? children : <Navigate to="/login" replace />;
+};
+
+/* ============== Router ============== */
 const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
 
   { path: "/login", element: <LoginPage /> },
   { path: "/register", element: <RegisterPage /> },
 
+  /* ===== Tenant ===== */
   {
     path: "/tenant",
     element: (
@@ -48,6 +64,7 @@ const router = createBrowserRouter([
     ],
   },
 
+  /* ===== Admin ===== */
   {
     path: "/admin",
     element: (
@@ -62,16 +79,26 @@ const router = createBrowserRouter([
       { path: "rooms", element: <AdminRoomsManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
 
-      // payments เป็น parent route ที่มี child route "issue"
-      {
-        path: "payments",
-        element: <AdminPaymentsPage />,
-        children: [
-          { path: "issue", element: <AdminInvoiceCreatePage /> }, // /admin/payments/issue
-        ],
-      },
+      // payments แยก 2 หน้า: ออกใบแจ้งหนี้ / อนุมัติ
+      { path: "payments", element: <AdminInvoiceCreatePage /> },
+      { path: "payments/approve", element: <AdminPaymentsPage /> },
 
-      // (ไม่ต้องเพิ่ม /admin/payments/issue เดียวอีกทีข้างนอก)
+      { path: "repairs", element: <AdminRepairManagement /> },
+    ],
+  },
+
+  /* ===== Technician (ช่าง) ===== */
+  {
+    path: "/technician",
+    element: (
+      <RequireAuth>
+        <RequireTechnician>
+          <TechnicianLayout />
+        </RequireTechnician>
+      </RequireAuth>
+    ),
+    children: [
+      { index: true, element: <TechnicianRepairsPage /> }, // รายการงานซ่อมของช่าง
     ],
   },
 

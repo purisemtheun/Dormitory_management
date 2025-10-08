@@ -390,3 +390,43 @@ exports.deleteRepair = async (req, res) => {
   }
 };
 
+// ดึงรายชื่อช่างสำหรับ dropdown
+exports.listTechnicians = async (_req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, name
+         FROM users
+        WHERE role = 'technician'
+        ORDER BY name ASC, id ASC`
+    );
+    return res.json(rows);
+  } catch (e) {
+    console.error('🔥 [listTechnicians] error:', e);
+    return res.status(500).json({ error: 'โหลดรายชื่อช่างไม่สำเร็จ' });
+  }
+};
+
+// admin เซ็ตสถานะงาน (ใช้กับปฏิเสธ)
+exports.adminSetStatus = async (req, res) => {
+  try {
+    const { id: repairId } = req.params;
+    const { status } = req.body || {};
+    // อนุญาตเฉพาะสถานะเหล่านี้
+    const allowed = new Set(['new', 'in_progress', 'done', 'rejected']);
+    if (!allowed.has(status)) {
+      return res.status(400).json({ error: 'สถานะไม่ถูกต้อง', allowed: Array.from(allowed) });
+    }
+    const [result] = await db.query(
+      'UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1',
+      [status, repairId]
+    );
+    if (result.affectedRows !== 1) {
+      return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
+    }
+    return res.json({ message: 'อัปเดตสถานะสำเร็จ', repair_id: repairId, status });
+  } catch (e) {
+    console.error('🔥 [adminSetStatus] error:', e);
+    return res.status(500).json({ error: 'อัปเดตสถานะไม่สำเร็จ' });
+  }
+};
+

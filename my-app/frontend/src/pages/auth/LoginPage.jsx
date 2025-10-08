@@ -1,3 +1,4 @@
+// src/pages/auth/LoginPage.jsx
 import React, { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { loginApi } from "../../services/auth.api.js";
@@ -33,15 +34,24 @@ export default function LoginPage() {
 
     try {
       setLoading(true);
-      const { token } = await loginApi({ email, password });
-      saveToken(token);
+      const resp = await loginApi({ email, password });
+      // รองรับทั้ง token หรือ access_token และรองรับกรณีใส่ Bearer มาด้วย
+      const raw = resp?.token ?? resp?.access_token ?? "";
+      const jwt = String(raw).replace(/^Bearer\s+/i, ""); // ตัดคำว่า Bearer ออก
 
-      // redirect ตาม role (รองรับ technician→tech ใน utils แล้ว)
+      // ใช้ค่า remember จาก checkbox จริง ๆ
+      saveToken(jwt, { remember });
+
+      // อ่าน role จาก JWT แล้วนำทางให้ตรงกับ routes ของโปรเจกต์
       const role = getRole();
       const go =
-        role === "admin" ? "/admin" :
-        role === "tech" ? "/tech" :
-        role === "tenant" ? "/tenant" : from;
+        role === "admin" || role === "staff"
+          ? "/admin"
+          : role === "technician"
+          ? "/technician"
+          : role === "tenant"
+          ? "/tenant"
+          : from; // ถ้าไม่มี role ก็กลับ path เดิม
 
       navigate(go, { replace: true });
     } catch (err) {
@@ -55,27 +65,22 @@ export default function LoginPage() {
 
   return (
     <>
-      {/* พื้นหลังให้เห็นชัดแน่ๆ */}
       <div className="fixed inset-0 -z-10 bg-gradient-to-br from-indigo-50 to-white" />
       <div className="page">
         <form onSubmit={onSubmit} className="card space-y-6">
-          {/* Header */}
           <div className="text-center space-y-1">
             <div className="mx-auto h-12 w-12 rounded-2xl bg-indigo-600 text-white grid place-items-center text-lg font-bold">
               เว็บแอพลิเคชั่นระบบจัดการหอพัก
             </div>
             <h1 className="text-xl font-bold">เข้าสู่ระบบ</h1>
-  
           </div>
 
-          {/* Error รวม */}
           {errors.general && (
             <p className="rounded bg-red-50 text-red-700 px-3 py-2 text-sm">
               {errors.general}
             </p>
           )}
 
-          {/* Email */}
           <div>
             <label className="label">อีเมล</label>
             <input
@@ -94,7 +99,6 @@ export default function LoginPage() {
             )}
           </div>
 
-          {/* Password */}
           <div>
             <label className="label">รหัสผ่าน</label>
             <div className="relative">
@@ -119,7 +123,6 @@ export default function LoginPage() {
             )}
           </div>
 
-          {/* Remember + ลืมรหัสผ่าน(ตัวอย่างลิงก์) */}
           <div className="flex items-center justify-between">
             <label className="inline-flex items-center gap-2 text-sm">
               <input
@@ -130,13 +133,9 @@ export default function LoginPage() {
               />
               <span>จำฉันไว้</span>
             </label>
-            <span className="text-sm text-gray-500">
-              {/* ใส่ลิงก์จริงภายหลังได้ */}
-              ลืมรหัสผ่าน?
-            </span>
+            <span className="text-sm text-gray-500">ลืมรหัสผ่าน?</span>
           </div>
 
-          {/* ปุ่ม */}
           <button type="submit" disabled={!canSubmit} className="btn-primary w-full">
             {loading ? (
               <span className="inline-flex items-center gap-2">
@@ -151,7 +150,6 @@ export default function LoginPage() {
             )}
           </button>
 
-          {/* Link ไปสมัคร */}
           <p className="text-center text-sm">
             ยังไม่มีบัญชี?{" "}
             <Link to="/register" className="text-indigo-600 hover:underline">

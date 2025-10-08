@@ -40,16 +40,19 @@ async function getMyLastInvoices(req, res) {
          paid_at,
          slip_url,
          CASE
-           WHEN status <> 'paid' AND due_date IS NOT NULL AND CURDATE() > due_date THEN 'overdue'
+           WHEN status <> 'paid'
+                AND due_date IS NOT NULL
+                AND CURDATE() > due_date THEN 'overdue'
            ELSE status
          END AS effective_status
        FROM invoices
        WHERE tenant_id = ?
-       ORDER BY period_ym DESC
+       ORDER BY period_ym DESC, id DESC
        LIMIT ?`,
       [tenantId, limit]
     );
 
+    // ✅ ส่ง array ตรง ๆ เพื่อให้ frontend จับได้ทันที
     res.json(rows);
   } catch (e) {
     console.error('getMyLastInvoices error:', e);
@@ -86,11 +89,16 @@ async function submitPayment(req, res) {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { invoice_id, amount_paid, transfer_date, note } = req.body;
-    if (!invoice_id) return res.status(400).json({ error: 'ระบุ invoice_id' });
-    if (!req.file)   return res.status(400).json({ error: "กรุณาแนบไฟล์สลิป (field ต้องชื่อ 'slip')" });
+    if (!invoice_id)
+      return res.status(400).json({ error: 'ระบุ invoice_id' });
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ error: "กรุณาแนบไฟล์สลิป (field ต้องชื่อ 'slip')" });
 
     const tenantId = await getTenantIdByUser(userId);
-    if (!tenantId) return res.status(400).json({ error: 'ไม่พบ tenant ของผู้ใช้' });
+    if (!tenantId)
+      return res.status(400).json({ error: 'ไม่พบ tenant ของผู้ใช้' });
 
     const [[inv]] = await db.query(
       `SELECT id, tenant_id FROM invoices WHERE id = ? LIMIT 1`,
@@ -100,11 +108,9 @@ async function submitPayment(req, res) {
       return res.status(400).json({ error: 'บิลไม่ถูกต้อง' });
     }
 
-    // ตั้ง URL เสิร์ฟสลิป (static /uploads)
     const filename = req.file.filename || path.basename(req.file.path);
     const slip_url = `/uploads/slips/${filename}`;
 
-    // (ถ้ามีตาราง payments แยก) บันทึกประวัติ
     try {
       await db.query(
         `INSERT INTO payments
@@ -119,9 +125,10 @@ async function submitPayment(req, res) {
           note || null,
         ]
       );
-    } catch (_) { /* ไม่มีตารางก็ข้าม */ }
+    } catch (_) {
+      /* ไม่มีตารางก็ข้าม */
+    }
 
-    // อัปเดตที่ invoices
     await db.query(
       `UPDATE invoices
           SET status='pending',

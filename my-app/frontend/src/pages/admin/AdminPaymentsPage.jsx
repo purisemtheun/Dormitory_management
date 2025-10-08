@@ -8,8 +8,9 @@ const api = {
   getPending: async () => {
     const r = await fetch("/api/admin/invoices/pending", {
       headers: { Authorization: `Bearer ${getToken()}` },
+      credentials: "include",
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d?.error || "โหลดรายการไม่สำเร็จ");
     return Array.isArray(d) ? d : [];
   },
@@ -20,14 +21,63 @@ const api = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${getToken()}`,
       },
+      credentials: "include",
       body: JSON.stringify({ action }),
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d?.error || "อัปเดตไม่สำเร็จ");
     return d;
   },
 };
 
+/* ===================== utils ===================== */
+const fmtTHB = (v) => {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "-";
+  try {
+    return new Intl.NumberFormat("th-TH", {
+      style: "currency",
+      currency: "THB",
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return n.toFixed(2);
+  }
+};
+
+// แปลง "2025-09" → "ก.ย. 2568"
+const ymToThai = (ym) => {
+  if (!ym) return "-";
+  const m = String(ym).replace(/[^0-9]/g, "");
+  let year, month;
+  if (m.length >= 6) {
+    year = Number(m.slice(0, 4));
+    month = Number(m.slice(4, 6));
+  } else {
+    const parts = String(ym).split(/[-/_.\s]+/);
+    if (parts.length >= 2) {
+      year = Number(parts[0]);
+      month = Number(parts[1]);
+    }
+  }
+  if (!year || !month) return ym;
+  const thMonths = ["-", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  return `${thMonths[month]} ${year + 543}`;
+};
+
+const isImage = (url = "") => /\.(png|jpe?g|webp|gif|bmp)$/i.test(url || "");
+
+// ป้องกันปัญหา URL ถูก encode ซ้ำ (%25…)
+const normalizeUrl = (u = "") => {
+  try {
+    if (u.includes("%25")) return decodeURIComponent(u);
+    return u;
+  } catch {
+    return u;
+  }
+};
+
+/* ===================== page ===================== */
 export default function AdminPaymentsPage() {
   const [items, setItems] = useState([]);
   const [err, setErr] = useState("");
@@ -37,7 +87,8 @@ export default function AdminPaymentsPage() {
 
   const load = async () => {
     try {
-      setLoading(true); setErr("");
+      setLoading(true);
+      setErr("");
       const data = await api.getPending();
       setItems(data);
     } catch (e) {
@@ -47,6 +98,7 @@ export default function AdminPaymentsPage() {
       setLoading(false);
     }
   };
+
   useEffect(() => {
     load();
   }, []);
@@ -54,12 +106,12 @@ export default function AdminPaymentsPage() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return items;
-    return items.filter(
-      (r) =>
-        String(r.tenant_name ?? "").toLowerCase().includes(s) ||
-        String(r.tenant_room ?? "").toLowerCase().includes(s) ||
-        String(r.period_ym ?? "").toLowerCase().includes(s)
-    );
+    return items.filter((r) => {
+      const name = String(r.tenant_name ?? `Tenant#${r.tenant_id ?? ""}`).toLowerCase();
+      const room = String(r.tenant_room ?? r.room_no ?? "").toLowerCase();
+      const ym = String(r.period_ym ?? r.billing_month ?? "").toLowerCase();
+      return name.includes(s) || room.includes(s) || ym.includes(s);
+    });
   }, [q, items]);
 
   const act = async (invoiceId, action) => {
@@ -74,6 +126,7 @@ export default function AdminPaymentsPage() {
     }
   };
 
+  // ---- styles ----
   const pageBg = { background: "#f8fafc", minHeight: "calc(100vh - 80px)" };
   const wrap = { maxWidth: 1100, margin: "24px auto", padding: 16 };
   const card = {
@@ -90,28 +143,91 @@ export default function AdminPaymentsPage() {
     fontWeight: 700,
     padding: "12px 14px",
     borderBottom: "1px solid #e5e7eb",
+    whiteSpace: "nowrap",
   };
-  const td = { padding: "12px 14px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top" };
+  const td = {
+    padding: "12px 14px",
+    borderBottom: "1px solid #f1f5f9",
+    verticalAlign: "top",
+  };
   const badge = (text) => ({
     display: "inline-block",
     padding: "4px 10px",
     borderRadius: 999,
     fontSize: 12,
-    background: text === "pending" ? "#fff7ed" : text === "paid" ? "#ecfdf5" : text === "rejected" ? "#fef2f2" : "#eef2ff",
-    color: text === "pending" ? "#9a3412" : text === "paid" ? "#065f46" : text === "rejected" ? "#991b1b" : "#3730a3",
+    background:
+      text === "pending"
+        ? "#fff7ed"
+        : text === "paid"
+        ? "#ecfdf5"
+        : text === "rejected"
+        ? "#fef2f2"
+        : "#eef2ff",
+    color:
+      text === "pending"
+        ? "#9a3412"
+        : text === "paid"
+        ? "#065f46"
+        : text === "rejected"
+        ? "#991b1b"
+        : "#3730a3",
     border: "1px solid rgba(0,0,0,0.06)",
+    textTransform: "capitalize",
   });
-  const isImage = (url = "") => /\.(png|jpe?g|webp|gif)$/i.test(url);
+
+  // --- Buttons style ---
+  const baseBtn = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minWidth: 108,          // ให้ขนาดนิ่งเท่ากัน
+    height: 36,
+    padding: "0 12px",
+    borderRadius: 10,
+    fontWeight: 700,
+    border: "1px solid transparent",
+    transition: "transform .05s ease, opacity .15s ease",
+    cursor: "pointer",
+    userSelect: "none",
+  };
+  const btnApprove = {
+    ...baseBtn,
+    background: "#ecfdf5",
+    color: "#065f46",
+    borderColor: "rgba(16,185,129,.35)",
+  };
+  const btnReject = {
+    ...baseBtn,
+    background: "#fef2f2",
+    color: "#991b1b",
+    borderColor: "rgba(239,68,68,.35)",
+  };
+  const btnDisabled = { opacity: 0.55, cursor: "not-allowed", transform: "none" };
 
   return (
     <div style={pageBg}>
       <div style={wrap}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
           <h2 style={{ margin: 0 }}>ตรวจสอบการชำระเงินของผู้เช่า</h2>
 
-          {/* ปุ่มไปหน้าออกใบแจ้งหนี้ (subpage) */}
-          <div style={{ marginLeft: 12 }}>
-            <Link to="issue" className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {/* ปุ่มไปหน้าออกใบแจ้งหนี้ (subpage ใต้ /admin/payments) */}
+          <div>
+            <Link
+              to="issue"
+              className="btn"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 12px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                textDecoration: "none",
+                background: "#fff",
+              }}
+              title="ไปยังหน้าออกใบแจ้งหนี้ (ย่อย)"
+            >
               ▾ ออกใบแจ้งหนี้ (หน้าเต็ม)
             </Link>
           </div>
@@ -120,25 +236,25 @@ export default function AdminPaymentsPage() {
             placeholder="ค้นหา: ชื่อ/ห้อง/เดือน"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            style={{ marginLeft: "auto", padding: "8px 10px", borderRadius: 8, border: "1px solid #e5e7eb", width: 260 }}
+            style={{
+              marginLeft: "auto",
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid #e5e7eb",
+              width: 260,
+            }}
           />
         </div>
 
         <div style={card}>
-          {loading && (
-            <p className="muted" style={{ margin: 0 }}>
-              กำลังโหลดรายการ…
-            </p>
-          )}
+          {loading && <p className="muted" style={{ margin: 0 }}>กำลังโหลดรายการ…</p>}
+
           {!loading && err && (
-            <p style={{ color: "#b91c1c", margin: 0 }}>
-              {err}
-            </p>
+            <p style={{ color: "#b91c1c", margin: 0 }}>{err}</p>
           )}
+
           {!loading && !err && filtered.length === 0 && (
-            <p className="muted" style={{ margin: 0 }}>
-              – ไม่มีรายการรอตรวจสอบ –
-            </p>
+            <p className="muted" style={{ margin: 0 }}>– ไม่มีรายการรอตรวจสอบ –</p>
           )}
 
           {!loading && !err && filtered.length > 0 && (
@@ -157,54 +273,90 @@ export default function AdminPaymentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row, idx) => (
-                    <tr key={row.invoice_id}>
-                      <td style={td}>{idx + 1}</td>
-                      <td style={td}>{row.tenant_name ?? `Tenant#${row.tenant_id}`}</td>
-                      <td style={td}>{row.tenant_room ?? "-"}</td>
-                      <td style={td}>{row.period_ym ?? "-"}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{Number(row.amount || 0).toLocaleString()}</td>
-                      <td style={td}>
-                        {row.slip_url ? (
-                          isImage(row.slip_url) ? (
-                            <a href={encodeURI(row.slip_url)} target="_blank" rel="noreferrer" title="เปิดสลิป">
-                              <img
-                                src={encodeURI(row.slip_url)}
-                                alt="slip"
-                                style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }}
-                              />
-                            </a>
+                  {filtered.map((row, idx) => {
+                    const id = row.invoice_id ?? row.bill_id ?? row.id ?? `${idx}`;
+                    const name = row.tenant_name ?? `Tenant#${row.tenant_id ?? "-"}`;
+                    const room = row.tenant_room ?? row.room_no ?? "-";
+                    const ym = ymToThai(row.period_ym ?? row.billing_month);
+                    const amount = fmtTHB(row.amount ?? row.total ?? row.rent);
+                    const rawSlip = row.slip_abs || row.slip_url || row.slip || "";
+                    const slip = normalizeUrl(rawSlip);
+                    const status = row.status ?? "pending";
+
+                    return (
+                      <tr key={id}>
+                        <td style={td}>{idx + 1}</td>
+                        <td style={td}>{name}</td>
+                        <td style={td}>{room}</td>
+                        <td style={td}>{ym}</td>
+                        <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{amount}</td>
+                        <td style={td}>
+                          {slip ? (
+                            isImage(slip) ? (
+                              <a href={slip} target="_blank" rel="noreferrer" title="เปิดสลิป">
+                                <img
+                                  src={slip}
+                                  alt="slip"
+                                  style={{
+                                    width: 120,
+                                    height: 90,
+                                    objectFit: "cover",
+                                    borderRadius: 8,
+                                    border: "1px solid #e5e7eb",
+                                  }}
+                                />
+                              </a>
+                            ) : (
+                              <a href={slip} target="_blank" rel="noreferrer">
+                                เปิดไฟล์
+                              </a>
+                            )
                           ) : (
-                            <a href={encodeURI(row.slip_url)} target="_blank" rel="noreferrer">
-                              เปิดไฟล์
-                            </a>
-                          )
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={td}>
-                        <span style={badge(row.status)}>{row.status}</span>
-                      </td>
-                      <td style={td}>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button className="btn" disabled={busyId === row.invoice_id} onClick={() => act(row.invoice_id, "approve")} title="อนุมัติการชำระเงิน">
-                            ✅ อนุมัติ
-                          </button>
-                          <button className="btn btn-danger" disabled={busyId === row.invoice_id} onClick={() => act(row.invoice_id, "reject")} title="ปฏิเสธ">
-                            ❌ ปฏิเสธ
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            "—"
+                          )}
+                        </td>
+                        <td style={td}>
+                          <span style={badge(status)}>{status}</span>
+                        </td>
+                        <td style={td}>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button
+                              style={{
+                                ...(busyId === id ? { ...btnApprove, ...btnDisabled } : btnApprove),
+                              }}
+                              disabled={busyId === id}
+                              onClick={() => act(id, "approve")}
+                              title="อนุมัติการชำระเงิน"
+                              aria-label="อนุมัติ"
+                            >
+                              <span aria-hidden>✅</span>
+                              <span>อนุมัติ</span>
+                            </button>
+
+                            <button
+                              style={{
+                                ...(busyId === id ? { ...btnReject, ...btnDisabled } : btnReject),
+                              }}
+                              disabled={busyId === id}
+                              onClick={() => act(id, "reject")}
+                              title="ปฏิเสธการชำระเงิน"
+                              aria-label="ปฏิเสธ"
+                            >
+                              <span aria-hidden>✖</span>
+                              <span>ปฏิเสธ</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
 
-        {/* ---------- ที่นี่คือจุดที่ subpage (AdminInvoiceCreatePage) จะถูก render ---------- */}
+        {/* ---------- Subpage (AdminInvoiceCreatePage) จะถูก render ที่นี่ ---------- */}
         <div style={{ marginTop: 16 }}>
           <Outlet />
         </div>

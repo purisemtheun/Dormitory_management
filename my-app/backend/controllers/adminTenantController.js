@@ -1,41 +1,24 @@
 // backend/controllers/adminTenantController.js
-// =====================================================
-// Controller จัดการ "รายชื่อผู้เช่า" (Tenants)
-// - ไม่บังคับ email ตอนสร้างผู้เช่า (email = NULL ได้)
-// - tenant_id ใช้รูปแบบ 'T0001', 'T0002', ... (สร้างเองในการ INSERT)
-// - room_id เริ่มเป็น NULL (ยังไม่ผูกห้อง) และจะไปอัปเดตตอน "book room"
-// - รองรับการค้นหาแบบ exact ด้วย tenant_code (T0001) และค้นหาด้วยชื่อ (LIKE)
-// - ใช้ Soft Delete ผ่านคอลัมน์ is_deleted (0 = ปกติ, 1 = ถูกลบ)
-// =====================================================
-
+// (วางทับไฟล์เดิม)
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 
-// -----------------------------------------------------
-// Helper: สร้างรหัสผู้เช่าใหม่ (tenant_id) รูปแบบ T0001
-// ดึงเลขสูงสุดที่มี แล้ว +1 แล้วแปะ 'T' + pad 4 หลัก
-// -----------------------------------------------------
-async function makeTenantId() {
-  const [[row]] = await db.query(
+// helper: create tenant id T0001...
+async function makeTenantId(conn) {
+  const qConn = conn || db;
+  const [[row]] = await qConn.query(
     "SELECT MAX(CAST(REPLACE(tenant_id,'T','') AS UNSIGNED)) AS maxn FROM tenants"
   );
   const next = (row?.maxn || 0) + 1;
   return 'T' + String(next).padStart(4, '0');
 }
 
-// -----------------------------------------------------
-// Expression: แสดงรหัสสั้นของผู้เช่าเสมอเป็น Txxxx
-// (กันเคสที่ tenant_id ในตารางอาจมีตัว 'T' อยู่แล้ว -> ตัดออกก่อนแปลงเลข)
-// -----------------------------------------------------
 const codeExpr =
   "CONCAT('T', LPAD(CAST(REPLACE(t.tenant_id,'T','') AS UNSIGNED), 4, '0'))";
 
-// -----------------------------------------------------
-// GET /api/admin/tenants?q=...
-// - แสดงผู้เช่า "ล่าสุดต่อคน" แค่ 1 แถว (ให้ความสำคัญกับแถวที่ room_id ไม่ว่าง > วันที่ใหม่สุด > tenant_id มากสุด)
-// - รองรับค้นหาทั้งรหัส T0001 (exact) หรือชื่อ (LIKE)
-// - กรองเฉพาะที่ is_deleted = 0
-// -----------------------------------------------------
+/**
+ * GET /api/admin/tenants?q=...
+ */
 async function listTenants(req, res, next) {
   try {
     const q = (req.query.q || '').trim();
@@ -54,7 +37,7 @@ async function listTenants(req, res, next) {
       "           LPAD(CAST(REPLACE(x.tenant_id,'T','') AS UNSIGNED), 10, '0') " +
       "         )) AS selkey " +
       "  FROM tenants x " +
-      "  WHERE x.is_deleted = 0 " + // ✅ กรองลบออก
+      "  WHERE x.is_deleted = 0 " +
       "  GROUP BY x.user_id " +
       ") pick ON pick.user_id = t.user_id " +
       "       AND CONCAT( " +
@@ -62,7 +45,7 @@ async function listTenants(req, res, next) {
       "             COALESCE(DATE_FORMAT(t.checkin_date, '%Y%m%d'), '00000000'), '|', " +
       "             LPAD(CAST(REPLACE(t.tenant_id,'T','') AS UNSIGNED), 10, '0') " +
       "           ) = pick.selkey " +
-      "WHERE t.is_deleted = 0 " + // ✅ กรองลบออก
+      "WHERE t.is_deleted = 0 " +
       ( /^T\d{4}$/i.test(q)
           ? "AND CONCAT('T', LPAD(CAST(REPLACE(t.tenant_id,'T','') AS UNSIGNED), 4, '0')) = ? "
           : (q ? "AND u.name LIKE ? " : "")
@@ -76,64 +59,121 @@ async function listTenants(req, res, next) {
     const [rows] = await db.query(sql, params);
     res.json(rows);
   } catch (e) {
+    console.error('listTenants error:', e);
     next(e);
   }
 }
 
-// -----------------------------------------------------
-// POST /api/admin/tenants
-// body: { name (required), phone?, checkin_date? }
-// - ไม่ต้องมี email (NULL ได้)
-// - จะสร้าง users (role='tenant') และแถว tenants โดย room_id = NULL
-// -----------------------------------------------------
+/**
+ * POST /api/admin/tenants
+ * body: { name (required), phone?, checkin_date? }
+ */
+// replace only the createTenant function in backend/controllers/adminTenantController.js
+// (or replace the whole file with the earlier full controller that included transactions)
 async function createTenant(req, res, next) {
+  let connection;
   try {
-    let { name, phone, checkin_date } = req.body;
-    if (!name || !name.trim()) {
+    let { name, phone, checkin_date, room_id } = req.body || {};
+    name = (name || '').trim();
+
+    if (!name) {
       return res.status(400).json({ error: 'name is required' });
     }
 
-    // สร้างผู้ใช้ (email = NULL, role=tenant, ตั้งรหัสผ่านชั่วคราว)
+    // Normalize room_id:
+    // - if client didn't send room_id => set to empty string ''
+    // - if sent empty string => keep '' (means "ยังไม่ผูกห้อง")
+    // - if sent a value => keep that (we will validate below)
+    const wantRoom = typeof room_id !== 'undefined';
+    const roomIdNormalized = wantRoom ? (room_id === '' ? '' : String(room_id).trim()) : '';
+
+    // get connection for transaction if possible
+    if (typeof db.getConnection === 'function') {
+      connection = await db.getConnection();
+    }
+    const q = connection || db;
+
+    if (connection && typeof connection.beginTransaction === 'function') {
+      await connection.beginTransaction();
+    }
+
+    // If a non-empty room_id was provided, ensure the room exists
+    if (roomIdNormalized) {
+      const [[r]] = await q.query('SELECT room_id FROM rooms WHERE room_id = ?', [roomIdNormalized]);
+      if (!r) {
+        // rollback and respond
+        if (connection && typeof connection.rollback === 'function') await connection.rollback();
+        return res.status(400).json({ error: 'Invalid room_id: room does not exist', code: 'ROOM_NOT_FOUND' });
+      }
+    }
+
+    // create user
     const tempPassword = Math.random().toString(36).slice(2, 10);
     const hashed = await bcrypt.hash(tempPassword, 10);
 
-    const [uIns] = await db.query(
-      'INSERT INTO users (name, email, password, role, phone) VALUES (?, NULL, ?, "tenant", ?)',
-      [name.trim(), hashed, phone || null]
-    );
-    const userId = uIns.insertId;
+    let userId;
+    try {
+      const [uIns] = await q.query(
+        'INSERT INTO users (name, email, password, role, phone) VALUES (?, NULL, ?, "tenant", ?)',
+        [name, hashed, phone || null]
+      );
+      userId = uIns.insertId;
+    } catch (eInsertUser) {
+      // fallback if email=NULL not allowed — create a fallback email
+      const fallbackEmail = `tenant+${Date.now()}_${Math.floor(Math.random()*10000)}@example.invalid`;
+      const [uIns2] = await q.query(
+        'INSERT INTO users (name, email, password, role, phone) VALUES (?, ?, ?, "tenant", ?)',
+        [name, fallbackEmail, hashed, phone || null]
+      );
+      userId = uIns2.insertId;
+    }
 
-    // สร้าง tenant_id ใหม่ แล้ว INSERT แถว tenants โดย room_id = NULL, is_deleted = 0
-    const tenantId = await makeTenantId();
-    await db.query(
-      'INSERT INTO tenants (tenant_id, user_id, room_id, checkin_date, is_deleted) VALUES (?,?,NULL,?,0)',
-      [tenantId, userId, checkin_date || null]
+    // make tenant_id (using same connection)
+    const tenantId = await makeTenantId(q);
+
+    // Insert tenant — IMPORTANT: supply non-null value for room_id
+    // If the DB schema disallows NULL, we pass '' (empty string) when no room provided.
+    await q.query(
+      'INSERT INTO tenants (tenant_id, user_id, room_id, checkin_date, is_deleted) VALUES (?,?,?,?,0)',
+      [tenantId, userId, roomIdNormalized || '', checkin_date || null]
     );
 
-    // ตอบกลับแถวที่สร้าง (พร้อม tenant_code)
+    if (connection && typeof connection.commit === 'function') {
+      await connection.commit();
+    }
+
+    // return created row
     const [[row]] = await db.query(`
       SELECT ${codeExpr} AS tenant_code, t.tenant_id, t.user_id, u.name, u.phone, t.room_id, t.checkin_date
       FROM tenants t JOIN users u ON u.id = t.user_id
       WHERE t.tenant_id = ?
     `, [tenantId]);
 
-    res.status(201).json(row);
+    return res.status(201).json(row);
   } catch (e) {
-    next(e);
+    console.error('createTenant error:', e);
+    try {
+      if (connection && typeof connection.rollback === 'function') await connection.rollback();
+    } catch (rbErr) {
+      console.error('rollback error:', rbErr);
+    }
+    return res.status(500).json({ error: e.message || 'Internal server error' });
+  } finally {
+    if (connection && typeof connection.release === 'function') {
+      connection.release();
+    }
   }
 }
 
-// -----------------------------------------------------
-// PATCH /api/admin/tenants/:id
-// - id = tenant_id
-// - body รองรับอัปเดตบางฟิลด์: name, phone (users), room_id, checkin_date (tenants)
-// -----------------------------------------------------
+
+/**
+ * PATCH /api/admin/tenants/:id
+ */
 async function updateTenant(req, res, next) {
   try {
     const id = req.params.id; // tenant_id
     let { name, phone, room_id, checkin_date } = req.body;
 
-    // หา user_id ก่อนเพื่ออัปเดตตาราง users และเช็คว่า tenant ยังไม่ถูกลบ
     const [[t]] = await db.query(
       'SELECT user_id FROM tenants WHERE tenant_id = ? AND is_deleted = 0',
       [id]
@@ -142,7 +182,6 @@ async function updateTenant(req, res, next) {
       return res.status(404).json({ error: 'Tenant not found', code: 'TENANT_NOT_FOUND' });
     }
 
-    // 1) อัปเดต users
     if (name != null || phone != null) {
       await db.query(
         'UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone) WHERE id = ?',
@@ -150,9 +189,6 @@ async function updateTenant(req, res, next) {
       );
     }
 
-    // 2) เตรียมค่าปกติของ room_id / checkin_date
-    // - ถ้า body ไม่ส่ง field มาเลย -> ไม่แตะฟิลด์นั้น
-    // - ถ้าส่ง "" (ค่าว่าง) -> ตั้งเป็น NULL เพื่อให้ผ่าน FK
     const wantUpdateRoom = room_id !== undefined;
     const wantUpdateCheckin = checkin_date !== undefined;
 
@@ -163,7 +199,6 @@ async function updateTenant(req, res, next) {
       checkin_date === undefined ? undefined :
       (checkin_date === '' ? null : checkin_date);
 
-    // 3) ถ้า room_id ตั้งค่ามา (ไม่ใช่ undefined) และไม่ใช่ NULL -> ต้องมีอยู่จริงใน rooms
     if (wantUpdateRoom && roomIdNormalized !== null) {
       const [[r]] = await db.query('SELECT room_id FROM rooms WHERE room_id = ?', [roomIdNormalized]);
       if (!r) {
@@ -174,13 +209,12 @@ async function updateTenant(req, res, next) {
       }
     }
 
-    // 4) สร้าง SQL อัปเดตเฉพาะฟิลด์ที่ต้องการ
     if (wantUpdateRoom || wantUpdateCheckin) {
       await db.query(
         'UPDATE tenants SET ' +
           (wantUpdateRoom ? 'room_id = ?, ' : '') +
           (wantUpdateCheckin ? 'checkin_date = ?, ' : '') +
-          'tenant_id = tenant_id ' + // no-op เพื่อจัดคอมม่าได้ง่าย
+          'tenant_id = tenant_id ' +
           'WHERE tenant_id = ? AND is_deleted = 0',
         [
           ...(wantUpdateRoom ? [roomIdNormalized] : []),
@@ -192,15 +226,14 @@ async function updateTenant(req, res, next) {
 
     res.json({ message: 'updated' });
   } catch (e) {
+    console.error('updateTenant error:', e);
     next(e);
   }
 }
 
-
-// -----------------------------------------------------
-// DELETE /api/admin/tenants/:id
-// - Soft delete: is_deleted = 1 (หลีกเลี่ยงปัญหา FK กับ repairs)
-// -----------------------------------------------------
+/**
+ * DELETE /api/admin/tenants/:id  (soft delete)
+ */
 async function deleteTenant(req, res) {
   try {
     const { id } = req.params;
@@ -224,9 +257,6 @@ async function deleteTenant(req, res) {
   }
 }
 
-// -----------------------------------------------------
-// Exports
-// -----------------------------------------------------
 module.exports = {
   listTenants,
   createTenant,
