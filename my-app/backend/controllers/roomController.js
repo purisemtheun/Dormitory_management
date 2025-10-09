@@ -70,18 +70,32 @@ exports.updateRoom = async (req, res) => {
   }
 };
 
-// ===== Admin/Staff: ลบห้อง
 exports.deleteRoom = async (req, res) => {
   try {
     const id = req.params.id;
+
+    // ตรวจสอบการอ้างอิง
+    const [[{ count }]] = await db.query(
+      'SELECT COUNT(*) AS count FROM tenants WHERE room_id = ?',
+      [id]
+    );
+    if (count > 0) {
+      return res.status(400).json({ error: 'Cannot delete: room has active tenants' });
+    }
+
+    // หากต้องการเคลียร์อ้างอิงอัตโนมัติใช้บรรทัดนี้แทน
+    // await db.query('UPDATE tenants SET room_id = NULL WHERE room_id = ?', [id]);
+
     const [ret] = await db.query('DELETE FROM rooms WHERE room_id = ?', [id]);
-    if (ret.affectedRows === 0) return res.status(404).json({ error: 'Room not found' });
+    if (ret.affectedRows === 0) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
     res.json({ message: 'deleted' });
   } catch (e) {
-    console.error('deleteRoom error:', e);
     res.status(500).json({ error: e.message || 'Internal server error' });
   }
 };
+
 
 // ===== Admin/Staff: ผูกห้องให้ผู้เช่า (Check-in)
 exports.bookRoomForTenant = async (req, res) => {
