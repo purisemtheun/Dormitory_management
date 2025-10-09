@@ -1,3 +1,4 @@
+// src/app/routes.jsx
 import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
@@ -17,15 +18,12 @@ import AdminRoomManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
 import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
-import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage"; // อาจใช้สำหรับหน้าชำระเงินหลัก
-import PaymentsPending from "../pages/admin/PaymentsPending";     // หน้าอนุมัติสลิป
-import AdminNotificationsPage from "../pages/admin/AdminNotificationsPage"; // ถ้ามีหน้าแจ้งเตือนแอดมิน
+import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage"; // ใช้งานจริงแล้ว!
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
-import TenantNotificationsPage from "../pages/tenant/TenantNotificationsPage";
 
 import { getToken, getRole } from "../utils/auth";
 
@@ -62,7 +60,6 @@ const router = createBrowserRouter([
       { index: true, element: <RoomInfoPage /> },
       { path: "repairs", element: <TenantRepairCreatePage /> },
       { path: "payments", element: <PaymentPage /> },
-      { path: "notifications", element: <TenantNotificationsPage /> },
     ],
   },
 
@@ -80,10 +77,17 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/admin/rooms" replace /> },
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
-      { path: "payments", element: <AdminInvoiceCreatePage /> },
-      { path: "payments/approve", element: <PaymentsPending /> },
+
+      // ✅ ใช้ AdminPaymentsPage เป็นหน้าแม่ และให้ "ออกใบแจ้งหนี้" เป็น subpage
+      {
+        path: "payments",
+        element: <AdminPaymentsPage />,
+        children: [
+          { path: "issue", element: <AdminInvoiceCreatePage /> },
+        ],
+      },
+
       { path: "repairs", element: <AdminRepairManagement /> },
-      { path: "notifications", element: <AdminNotificationsPage /> },
     ],
   },
 

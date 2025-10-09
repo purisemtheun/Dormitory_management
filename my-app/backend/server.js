@@ -17,8 +17,7 @@ const adminRoutes   = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 
 // ❗️ไฟล์สามตัวด้านล่างต้อง export แบบ CommonJS:  module.exports = router
-const tenantNotif   = require('./routes/tenant.notifications');
-const adminNotif    = require('./routes/admin.notifications');
+
 const adminProofs   = require('./routes/admin.paymentProofs');
 
 /* =========================
@@ -61,9 +60,7 @@ app.get('/api/invoices', requireAuth, (req, res, next) =>
   paymentCtrl.getMyLastInvoices(req, res, next)
 );
 
-// แจ้งเตือน/การจัดการฝั่งผู้เช่า-แอดมิน (แยก router)
-app.use('/api/tenant', tenantNotif);
-app.use('/api/admin',  adminNotif);
+
 app.use('/api/admin',  adminProofs);
 
 /* =========================
@@ -102,10 +99,9 @@ app.use((err, req, res, next) => {
 /* =========================
  * Background jobs (cron)
  * ========================= */
-const startMonthlyReminders = require('./jobs/monthlyReminders');
 
 
-startMonthlyReminders();
+
 
 /* =========================
  * Start server
