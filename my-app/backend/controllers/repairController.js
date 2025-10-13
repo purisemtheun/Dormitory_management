@@ -135,7 +135,6 @@ exports.getAllRepairs = async (req, res) => {
     }
 
     if (role === 'technician') {
-      // ✅ ช่างเห็นเฉพาะงานที่ถูกมอบหมายให้ตนเองเท่านั้น
       const [rows] = await db.query(
         `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
                 r.status, r.created_at, r.updated_at, r.assigned_to,
@@ -164,7 +163,6 @@ exports.getAllRepairs = async (req, res) => {
     return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการดึงรายการซ่อม' });
   }
 };
-
 
 exports.getRepairById = async (req, res) => {
   try {
@@ -223,11 +221,6 @@ exports.assignRepair = async (req, res) => {
     const job = rows[0];
     if (!job) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
 
-    // (ออปชัน) บังคับให้มอบหมายได้เฉพาะงานใหม่
-    // if (job.status !== 'new') {
-    //   return res.status(409).json({ error: 'งานไม่อยู่ในสถานะ new', current_status: job.status });
-    // }
-
     // ถ้าค่าเดิมเป็นคนเดียวกัน → ถือว่าสำเร็จ (idempotent)
     if (job.assigned_to === Number(assigned_to)) {
       return res.status(200).json({ message: 'มอบหมายงานสำเร็จ (เดิมอยู่แล้ว)', idempotent: true });
@@ -248,8 +241,7 @@ exports.assignRepair = async (req, res) => {
   }
 };
 
-
-// ===== Update (PATCH /repairs/:id) — allow only title, description, due_date/deadline =====
+// ===== Update (PATCH /repairs/:id)
 exports.updateRepair = async (req, res) => {
   try {
     const { role, id: userId } = req.user || {};
@@ -259,7 +251,7 @@ exports.updateRepair = async (req, res) => {
 
     const { id: repairId } = req.params;
 
-    // ✅ whitelist: อนุญาตเฉพาะ 3 ฟิลด์ + ฟิลด์ล็อกเวอร์ชัน
+    // whitelist
     const allowed = new Set(['title','description','due_date','deadline','prev_updated_at','prev_updated_at_ts']);
     const badKey = Object.keys(req.body).find(k => !allowed.has(k));
     if (badKey) {
@@ -269,8 +261,8 @@ exports.updateRepair = async (req, res) => {
     const title = req.body.title;
     const description = req.body.description;
     const dueInput = (req.body.due_date ?? req.body.deadline);
-    const prevUpdatedAt = req.body.prev_updated_at;        // ISO string (ออปชัน)
-    const prevUpdatedAtTs = req.body.prev_updated_at_ts;   // ms since epoch (ออปชัน)
+    const prevUpdatedAt = req.body.prev_updated_at;
+    const prevUpdatedAtTs = req.body.prev_updated_at_ts;
 
     // ดึงงานเป้าหมาย
     const [rows] = await db.query(
@@ -281,7 +273,7 @@ exports.updateRepair = async (req, res) => {
     const r = rows[0];
     if (!r) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
 
-    // ตรวจสิทธิ์ตามบทบาท
+    // ตรวจสิทธิ์
     if (role === 'tenant') {
       const [trows] = await db.query(
         'SELECT tenant_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
@@ -298,7 +290,7 @@ exports.updateRepair = async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    // เตรียมฟิลด์อัปเดต (เฉพาะที่อนุญาต)
+    // เตรียมฟิลด์
     const fields = [];
     const params = [];
 
@@ -323,7 +315,7 @@ exports.updateRepair = async (req, res) => {
       return res.status(400).json({ error: 'ไม่มีฟิลด์ที่จะแก้ไข (title/description/due_date)' });
     }
 
-    // อัปเดต + optimistic lock (รองรับทั้ง ISO และ timestamp)
+    // อัปเดต + optimistic lock
     let sql = `UPDATE repairs SET ${fields.join(', ')}, updated_at = NOW() WHERE repair_id = ?`;
     params.push(repairId);
 
@@ -340,7 +332,6 @@ exports.updateRepair = async (req, res) => {
       return res.status(409).json({ error: 'ข้อมูลถูกแก้ไขไปก่อนหน้าแล้ว กรุณารีเฟรช' });
     }
 
-    // ส่งแถวล่าสุดกลับ
     const [out] = await db.query(
       `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
               r.status, r.created_at, r.updated_at, r.assigned_to,
@@ -358,31 +349,22 @@ exports.updateRepair = async (req, res) => {
   }
 };
 
-
-// controllers/repairController.js
 exports.deleteRepair = async (req, res) => {
   try {
-    // เผื่อ route ยังไม่ได้ใช้ authorizeRoles('admin')
     if (!req.user || req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
     }
-
     const { id: repairId } = req.params;
     if (!repairId) {
       return res.status(400).json({ error: 'Missing repair id', code: 'BAD_REQUEST' });
     }
-
     const [result] = await db.query(
       'DELETE FROM repairs WHERE repair_id = ? LIMIT 1',
       [repairId]
     );
-
     if (result.affectedRows !== 1) {
       return res.status(404).json({ error: 'Repair not found', code: 'NOT_FOUND' });
     }
-
-    // เลือกอย่างใดอย่างหนึ่ง:
-    // return res.status(204).send(); // No Content
     return res.json({ message: 'ลบงานซ่อมสำเร็จ' });
   } catch (e) {
     console.error('🔥 [deleteRepair] error:', e);
@@ -393,40 +375,77 @@ exports.deleteRepair = async (req, res) => {
 // ดึงรายชื่อช่างสำหรับ dropdown
 exports.listTechnicians = async (_req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT id, name
-         FROM users
-        WHERE role = 'technician'
-        ORDER BY name ASC, id ASC`
-    );
-    return res.json(rows);
+    const [rows] = await db.query(`
+      SELECT
+        u.id,
+        COALESCE(NULLIF(u.name,''), u.email, CONCAT('Tech#', u.id)) AS name,
+        t.expertise,
+        t.available AS available
+      FROM users u
+      LEFT JOIN technicians t ON t.user_id = u.id
+      WHERE LOWER(u.role) = 'technician'
+        AND (u.status IS NULL OR LOWER(u.status) IN ('active','1','true'))
+      ORDER BY name ASC, u.id ASC
+    `);
+
+    const out = rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      expertise: r.expertise ?? null,
+      available: r.available ?? 1,
+    }));
+
+    return res.json(out);
   } catch (e) {
     console.error('🔥 [listTechnicians] error:', e);
     return res.status(500).json({ error: 'โหลดรายชื่อช่างไม่สำเร็จ' });
   }
 };
 
-// admin เซ็ตสถานะงาน (ใช้กับปฏิเสธ)
-exports.adminSetStatus = async (req, res) => {
+
+// ===== Technician update status =====
+exports.techSetStatus = async (req, res) => {
   try {
     const { id: repairId } = req.params;
-    const { status } = req.body || {};
-    // อนุญาตเฉพาะสถานะเหล่านี้
-    const allowed = new Set(['new', 'in_progress', 'done', 'rejected']);
-    if (!allowed.has(status)) {
-      return res.status(400).json({ error: 'สถานะไม่ถูกต้อง', allowed: Array.from(allowed) });
-    }
-    const [result] = await db.query(
-      'UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1',
-      [status, repairId]
+    const { action } = req.body || {};
+    const { id: userId } = req.user;
+
+    // แปลง action เป็นสถานะ
+    const map = {
+      start: "in_progress",
+      complete: "done",
+    };
+    const newStatus = map[action];
+    if (!newStatus)
+      return res.status(400).json({ error: "action ไม่ถูกต้อง (ต้องเป็น start หรือ complete)" });
+
+    // ตรวจว่างานนี้เป็นของช่างเอง
+    const [rows] = await db.query(
+      "SELECT repair_id, assigned_to, status FROM repairs WHERE repair_id = ? LIMIT 1",
+      [repairId]
     );
-    if (result.affectedRows !== 1) {
-      return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
+    const r = rows[0];
+    if (!r) return res.status(404).json({ error: "ไม่พบงานซ่อม" });
+    if (r.assigned_to !== userId)
+      return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้" });
+
+    // ป้องกันการ complete ซ้ำ
+    if (r.status === "done" && newStatus === "done") {
+      return res.status(200).json({ message: "งานนี้เสร็จสิ้นแล้ว" });
     }
-    return res.json({ message: 'อัปเดตสถานะสำเร็จ', repair_id: repairId, status });
-  } catch (e) {
-    console.error('🔥 [adminSetStatus] error:', e);
-    return res.status(500).json({ error: 'อัปเดตสถานะไม่สำเร็จ' });
+
+    // อัปเดตสถานะ
+    const [result] = await db.query(
+      "UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1",
+      [newStatus, repairId]
+    );
+
+    if (result.affectedRows !== 1)
+      return res.status(409).json({ error: "อัปเดตสถานะไม่สำเร็จ" });
+
+    return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: newStatus });
+  } catch (err) {
+    console.error("🔥 [techSetStatus] error:", err);
+    return res.status(500).json({ error: "เกิดข้อผิดพลาดในการอัปเดตสถานะ" });
   }
 };
-

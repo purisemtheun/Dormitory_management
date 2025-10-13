@@ -28,7 +28,7 @@ export default function TenantNavbar() {
           <NavLink to="/tenant/payments" className={linkClass}>
             ชำระเงิน
           </NavLink>
-          <NavLink to="/tenant/notifications">แจ้งเตือน</NavLink>
+          
 
         </div>
 

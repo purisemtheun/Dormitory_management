@@ -17,7 +17,6 @@ const adminRoutes   = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 
 // ❗️ไฟล์สามตัวด้านล่างต้อง export แบบ CommonJS:  module.exports = router
-
 const adminProofs   = require('./routes/admin.paymentProofs');
 
 /* =========================
@@ -25,6 +24,10 @@ const adminProofs   = require('./routes/admin.paymentProofs');
  * ========================= */
 const { requireAuth } = require('./middlewares/auth');
 const paymentCtrl     = require('./controllers/paymentController');
+
+// 👉 ใช้สำหรับ alias /api/technicians
+const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
+const repairController = require('./controllers/repairController');
 
 /* =========================
  * Global middlewares
@@ -60,8 +63,38 @@ app.get('/api/invoices', requireAuth, (req, res, next) =>
   paymentCtrl.getMyLastInvoices(req, res, next)
 );
 
+// ✅ Alias ตรงนี้: รายชื่อช่างสำหรับ dropdown (admin/staff)
+app.get(
+  '/api/technicians',
+  verifyToken,
+  authorizeRoles('admin', 'staff'),
+  repairController.listTechnicians
+);
+app.get(
+  '/api/tech/repairs',
+  verifyToken,
+  authorizeRoles('technician'),
+  repairController.getAllRepairs
+);
+
+// อัปเดตสถานะโดย "ช่าง"
+app.patch(
+  '/api/tech/repairs/:id/status',
+  verifyToken,
+  authorizeRoles('technician'),
+  repairController.techSetStatus
+);
+
+app.get(
+  '/api/tech/repairs/:id',
+  verifyToken,
+  authorizeRoles('technician'),
+  repairController.getRepairById
+);
+
 
 app.use('/api/admin',  adminProofs);
+
 
 /* =========================
  * 404 (ไว้ท้ายสุดของ routes)
@@ -95,13 +128,6 @@ app.use((err, req, res, next) => {
   }
   res.status(status).json(payload);
 });
-
-/* =========================
- * Background jobs (cron)
- * ========================= */
-
-
-
 
 /* =========================
  * Start server

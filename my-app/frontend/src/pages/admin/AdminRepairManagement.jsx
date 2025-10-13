@@ -1,3 +1,4 @@
+// src/pages/admin/AdminRepairManagement.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { getToken } from "../../utils/auth";
 
@@ -11,23 +12,31 @@ const api = {
     if (!r.ok) throw new Error(d?.error || "โหลดรายการซ่อมไม่สำเร็จ");
     return Array.isArray(d) ? d : [];
   },
+
+  // ✅ ใช้ปลายทางที่แบ็กเอนด์เปิดจริง: /api/repairs/technicians → fallback /api/technicians
   listTechnicians: async () => {
-    // พยายามเรียก endpoint มาตรฐานก่อน ถ้าไม่มีก็ fallback
-    const endpoints = ["/api/admin/technicians", "/api/users?role=technician"];
-    for (const url of endpoints) {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (r.ok) {
-        const d = await r.json();
-        // ทำให้โครงสร้างเป็น {id,name}
-        const arr = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []);
-        return arr.map(x => ({
-          id: x.id ?? x.user_id ?? x.uid,
-          name: x.name ?? x.full_name ?? x.display_name ?? `Tech#${x.id ?? x.user_id ?? x.uid}`,
-        }));
+    const headers = { Authorization: `Bearer ${getToken()}` };
+    const tryOnce = async (url) => {
+      const r = await fetch(url, { headers });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || `GET ${url} failed`);
+      const arr = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []);
+      return arr.map((x) => ({
+        id: x.id ?? x.user_id ?? x.uid,
+        name: x.name ?? x.full_name ?? x.username ?? x.email ?? `Tech#${x.id ?? x.user_id ?? x.uid}`,
+      }));
+    };
+    try {
+      return await tryOnce("/api/repairs/technicians");
+    } catch {
+      try {
+        return await tryOnce("/api/technicians");
+      } catch {
+        return [];
       }
     }
-    return [];
   },
+
   assign: async (repairId, techId) => {
     const r = await fetch(`/api/repairs/${encodeURIComponent(repairId)}/assign`, {
       method: "PATCH",
@@ -35,12 +44,13 @@ const api = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${getToken()}`,
       },
-      body: JSON.stringify({ assigned_to: techId }),
+      body: JSON.stringify({ assigned_to: Number(techId) }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d?.error || "มอบหมายงานไม่สำเร็จ");
     return d;
   },
+
   setStatus: async (repairId, status) => {
     const r = await fetch(`/api/repairs/${encodeURIComponent(repairId)}/status`, {
       method: "PATCH",
@@ -90,13 +100,13 @@ export default function AdminRepairManagement() {
       const [rps, tcs] = await Promise.all([api.listRepairs(), api.listTechnicians()]);
       setItems(rps);
       setTechs(tcs);
-      // เติมค่าเริ่มต้น dropdown จาก assigned_to
       const init = {};
-      rps.forEach(r => { if (r.assigned_to) init[r.repair_id] = r.assigned_to; });
+      rps.forEach((r) => { if (r.assigned_to) init[r.repair_id] = r.assigned_to; });
       setAssignSel(init);
     } catch (e) {
       setErr(e.message || "โหลดข้อมูลไม่สำเร็จ");
       setItems([]);
+      setTechs([]);
     } finally {
       setLoading(false);
     }
@@ -107,7 +117,7 @@ export default function AdminRepairManagement() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return items;
-    return items.filter(r =>
+    return items.filter((r) =>
       String(r.repair_id).toLowerCase().includes(s) ||
       String(r.title || "").toLowerCase().includes(s) ||
       String(r.room_id || "").toLowerCase().includes(s) ||
@@ -120,7 +130,7 @@ export default function AdminRepairManagement() {
     if (!techId) return alert("กรุณาเลือกช่างก่อนมอบหมาย");
     try {
       setBusyId(rid);
-      await api.assign(rid, Number(techId));
+      await api.assign(rid, techId);
       await load();
     } catch (e) {
       alert(e.message);
@@ -201,18 +211,34 @@ export default function AdminRepairManagement() {
                       <td style={td}>
                         <select
                           value={assignSel[r.repair_id] ?? ""}
-                          onChange={(e) => setAssignSel(s => ({ ...s, [r.repair_id]: e.target.value }))}
-                          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e5e7eb" }}
+                          onChange={(e) => setAssignSel((s) => ({ ...s, [r.repair_id]: e.target.value }))}
+                          onMouseDown={(e) => e.stopPropagation()} // กัน event bubble ไปครอบทับ
+                          style={{
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "1px solid #e5e7eb",
+                            position: "relative",
+                            zIndex: 2,               // กันโดน overlay/scroll mask
+                          }}
                         >
-                          <option value="">— เลือกช่าง —</option>
-                          {techs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          {techs.length === 0 ? (
+                            <option value="">— ไม่มีช่าง —</option>
+                          ) : (
+                            <>
+                              <option value="">— เลือกช่าง —</option>
+                              {techs.map((t) => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </>
+                          )}
                         </select>
                       </td>
                       <td style={td}>
                         <div style={{ display: "flex", gap: 8 }}>
                           <button
                             className="btn"
-                            disabled={busyId === r.repair_id}
+                            disabled={busyId === r.repair_id || techs.length === 0}
                             onClick={() => assign(r.repair_id)}
                             title="มอบหมายช่าง"
                           >
@@ -239,3 +265,5 @@ export default function AdminRepairManagement() {
     </div>
   );
 }
+
+

@@ -17,11 +17,13 @@ export const repairsService = {
 
       const res = await http.post("/api/repairs", fd, {
         // ปล่อยให้ browser ตั้ง multipart/form-data; boundary=... เอง
-        transformRequest: [(form, headers) => {
-          if (typeof headers.delete === "function") headers.delete("Content-Type");
-          else delete headers["Content-Type"];
-          return form;
-        }],
+        transformRequest: [
+          (form, headers) => {
+            if (typeof headers.delete === "function") headers.delete("Content-Type");
+            else delete headers["Content-Type"];
+            return form;
+          },
+        ],
       });
       return res.data;
     }
@@ -29,5 +31,21 @@ export const repairsService = {
     // โหมด JSON (ไม่มีไฟล์)
     const res = await http.post("/api/repairs", rest);
     return res.data;
+  },
+
+  // ✅ ดึงรายชื่อช่างสำหรับ dropdown (admin/staff)
+  // server คุณรองรับทั้ง /api/repairs/technicians และ /api/technicians
+  listTechnicians: async () => {
+    try {
+      const res = await http.get("/api/repairs/technicians");
+      return res.data;
+    } catch (err) {
+      // fallback เผื่อบางสภาพแวดล้อมเปิด alias /api/technicians
+      if (err?.response?.status === 404) {
+        const res2 = await http.get("/api/technicians");
+        return res2.data;
+      }
+      throw err?.response?.data || err;
+    }
   },
 };

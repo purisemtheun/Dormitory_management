@@ -1,14 +1,13 @@
-// frontend/src/pages/admin/AdminPaymentsPage.jsx
 import React, { useEffect, useState } from "react";
 import { getToken } from "../../utils/auth";
 
-/* ===== API helpers (เรียกเฉพาะที่จำเป็น) ===== */
+/* ===== API helpers ===== */
 const api = {
   getTenants: async () => {
     const r = await fetch("/api/admin/tenants", {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d?.error || "โหลดผู้เช่าไม่สำเร็จ");
     return Array.isArray(d) ? d : [];
   },
@@ -21,18 +20,18 @@ const api = {
       },
       body: JSON.stringify(payload),
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d?.error || "ออกใบแจ้งหนี้ไม่สำเร็จ");
     return d;
   },
 };
 
-export default function AdminPaymentsPage() {
+export default function AdminInvoiceCreatePage() {
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // ฟอร์ม
+  // form state
   const [tenantId, setTenantId] = useState("");
   const [periodYm, setPeriodYm] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -63,17 +62,13 @@ export default function AdminPaymentsPage() {
       setBusy(true);
       setErr("");
       await api.createInvoice({
-        tenant_id: tenantId,
-        period_ym: periodYm,
+        tenant_id: Number(tenantId),
+        period_ym: periodYm.trim(),
         amount: Number(amount),
         due_date: dueDate,
       });
       alert("ออกใบแจ้งหนี้สำเร็จ");
-      // เคลียร์ฟอร์ม
-      setTenantId("");
-      setPeriodYm("");
-      setAmount("");
-      setDueDate("");
+      setTenantId(""); setPeriodYm(""); setAmount(""); setDueDate("");
     } catch (e2) {
       setErr(e2.message || "ออกใบแจ้งหนี้ไม่สำเร็จ");
     } finally {
@@ -115,7 +110,7 @@ export default function AdminPaymentsPage() {
                 <option value="">— เลือกผู้เช่า —</option>
                 {tenants.map((t) => (
                   <option key={t.tenant_id} value={t.tenant_id}>
-                    {(t.full_name || t.name || `ผู้เช่า ${t.tenant_id}`)} — ห้อง {t.room_id || "-"}
+                    {(t.full_name || t.name || `ผู้เช่า ${t.tenant_id}`)} — ห้อง {t.room_no || t.room_id || "-"}
                   </option>
                 ))}
               </select>
@@ -158,7 +153,6 @@ export default function AdminPaymentsPage() {
 
             <button
               type="submit"
-              className="btn-primary"
               disabled={busy || loading}
               style={{
                 marginTop: 16,

@@ -13,7 +13,6 @@ function AdminSidebarInline() {
     if (location.pathname.startsWith("/admin/repairs")) setRepairsOpen(true);
   }, [location.pathname]);
 
-
   const COLORS = {
     bg: "#111827",
     text: "#ffffff",
@@ -34,65 +33,24 @@ function AdminSidebarInline() {
       gap: 8,
       color: COLORS.text,
     },
-    brand: {
-      fontWeight: 800,
-      fontSize: 22,
-      marginBottom: 8,
-      display: "inline-block",
-      color: COLORS.text,
-      textDecoration: "none",
-    },
-    label: {
-      marginTop: 12,
-      fontSize: 12,
-      color: COLORS.textSubtle,
-      textTransform: "uppercase",
-    },
-    link: {
-      display: "block",
-      padding: "10px 12px",
-      borderRadius: 10,
-      color: COLORS.text,
-      textDecoration: "none",
-      transition: "background .15s ease",
-    },
+    brand: { fontWeight: 800, fontSize: 22, marginBottom: 8, display: "inline-block", color: COLORS.text, textDecoration: "none" },
+    label: { marginTop: 12, fontSize: 12, color: COLORS.textSubtle, textTransform: "uppercase" },
+    link: { display: "block", padding: "10px 12px", borderRadius: 10, color: COLORS.text, textDecoration: "none", transition: "background .15s ease" },
     linkActive: { background: COLORS.active },
     linkHover: { background: COLORS.hover },
-
     toggle: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      padding: "10px 12px",
-      borderRadius: 10,
-      cursor: "pointer",
-      userSelect: "none",
-      color: COLORS.text,
-      transition: "background .15s ease",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "10px 12px", borderRadius: 10, cursor: "pointer", userSelect: "none",
+      color: COLORS.text, transition: "background .15s ease",
     },
-
     subWrap: { display: "flex", flexDirection: "column", gap: 6, paddingLeft: 6 },
-    subLink: {
-      display: "block",
-      padding: "8px 10px",
-      borderRadius: 8,
-      textDecoration: "none",
-      color: COLORS.text,
-      transition: "background .15s ease",
-    },
+    subLink: { display: "block", padding: "8px 10px", borderRadius: 8, textDecoration: "none", color: COLORS.text, transition: "background .15s ease" },
     subActive: { background: COLORS.active },
     subHover: { background: COLORS.hover },
-
     footer: { marginTop: "auto", paddingTop: 12 },
     logoutBtn: {
-      width: "100%",
-      padding: "10px 12px",
-      borderRadius: 8,
-      border: `1px solid ${COLORS.border}`,
-      background: "transparent",
-      color: COLORS.text,
-      cursor: "pointer",
-      transition: "background .15s ease",
+      width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`,
+      background: "transparent", color: COLORS.text, cursor: "pointer", transition: "background .15s ease",
     },
   };
 
@@ -101,8 +59,8 @@ function AdminSidebarInline() {
       to={to}
       end={end}
       style={({ isActive }) => ({ ...S.link, ...(isActive ? S.linkActive : {}) })}
-      onMouseEnter={(e) => !e.currentTarget.classList.contains("active") && Object.assign(e.currentTarget.style, S.linkHover)}
-      onMouseLeave={(e) => !e.currentTarget.classList.contains("active") && Object.assign(e.currentTarget.style, { background: "transparent" })}
+      onMouseEnter={(e) => Object.assign(e.currentTarget.style, S.linkHover)}
+      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "transparent" })}
     >
       {children}
     </NavLink>
@@ -112,8 +70,8 @@ function AdminSidebarInline() {
     <NavLink
       to={to}
       style={({ isActive }) => ({ ...S.subLink, ...(isActive ? S.subActive : {}) })}
-      onMouseEnter={(e) => !e.currentTarget.classList.contains("active") && Object.assign(e.currentTarget.style, S.subHover)}
-      onMouseLeave={(e) => !e.currentTarget.classList.contains("active") && Object.assign(e.currentTarget.style, { background: "transparent" })}
+      onMouseEnter={(e) => Object.assign(e.currentTarget.style, S.subHover)}
+      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "transparent" })}
     >
       {children}
     </NavLink>
@@ -121,8 +79,11 @@ function AdminSidebarInline() {
 
   const handleLogout = () => {
     try {
+      // เคลียร์ได้ทั้งสองแบบ เพื่อครอบคลุมทุกเคสที่โค้ดอื่นอาจใช้
+      localStorage.removeItem("auth");
       localStorage.removeItem("token");
       localStorage.removeItem("role");
+      sessionStorage.removeItem("auth");
       sessionStorage.removeItem("token");
       sessionStorage.removeItem("role");
     } catch {}
@@ -151,7 +112,8 @@ function AdminSidebarInline() {
       </div>
       {paymentsOpen && (
         <div style={S.subWrap}>
-          <SubLinkItem to="/admin/payments/approve">อนุมัติการชำระเงิน</SubLinkItem>
+          {/* ✅ ชี้ path ให้ตรงกับ routes.jsx */}
+          <SubLinkItem to="/admin/payments/review">อนุมัติการชำระเงิน</SubLinkItem>
           <SubLinkItem to="/admin/payments">ออกใบแจ้งหนี้</SubLinkItem>
         </div>
       )}
