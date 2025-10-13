@@ -3,13 +3,16 @@ const express = require("express");
 const router = express.Router();
 
 const repair = require("../controllers/repairController");
+const admin = require("../controllers/adminRepairController"); // ถ้ามี
+const tech = require("../controllers/techRepairController");   // ถ้ามี
+
 const { verifyToken, authorizeRoles } = require("../middlewares/authMiddleware");
 
 /* ======================================================
- * 🧱 ROUTES: /api/repairs  (server.js mount แล้ว)
+ * /api/repairs
  * ====================================================== */
 
-/** ✅ 1. Tenant / Admin สร้างใบแจ้งซ่อม */
+// สร้างใบแจ้งซ่อม
 router.post(
   "/",
   verifyToken,
@@ -17,16 +20,16 @@ router.post(
   repair.createRepair
 );
 
-/** ✅ 2. ดึงรายการแจ้งซ่อมทั้งหมด (filter ตาม role อัตโนมัติ) */
+// ดึงรายการทั้งหมด (กรองตาม role)
 router.get("/", verifyToken, repair.getAllRepairs);
 
-/** ✅ 3. ดึงรายละเอียดงานซ่อมทีละรายการ */
+// รายการทีละงาน
 router.get("/:id", verifyToken, repair.getRepairById);
 
-/** ✅ 4. แก้ไขข้อมูลงานซ่อม (เช่น เปลี่ยนรายละเอียด / รูป) */
+// แก้ไขงาน
 router.patch("/:id", verifyToken, repair.updateRepair);
 
-/** ✅ 5. ลบงานซ่อม (เฉพาะ admin) */
+// ลบงาน (admin)
 router.delete(
   "/:id",
   verifyToken,
@@ -34,15 +37,7 @@ router.delete(
   repair.deleteRepair
 );
 
-/** ✅ 6. มอบหมายงานให้ช่าง (Admin / Manager เท่านั้น) */
-router.patch(
-  "/:id/assign",
-  verifyToken,
-  authorizeRoles("admin", "manager"),
-  repair.assignRepair
-);
-
-/** ✅ 7. รายชื่อช่าง (ใช้ใน dropdown ฝั่งแอดมิน) */
+// รายชื่อช่างสำหรับ dropdown
 router.get(
   "/technicians",
   verifyToken,
@@ -50,11 +45,26 @@ router.get(
   repair.listTechnicians
 );
 
-/* ======================================================
- * 🔧 ROUTES: /api/tech/repairs (alias สำหรับช่าง)
- * ====================================================== */
+/* ---------- สำคัญ: ให้ตรงกับ Frontend ---------- */
+// มอบหมายงานให้ช่าง (เรียกจาก FE: PATCH /api/repairs/:id/assign)
+router.patch(
+  "/:id/assign",
+  verifyToken,
+  authorizeRoles("admin", "manager"),
+  repair.assignRepair
+);
 
-/** ✅ 8. รายการงานของช่าง (เฉพาะ assigned_to = user.id) */
+// แอดมินเปลี่ยนสถานะ (ใช้ปุ่ม "ปฏิเสธ")
+router.patch(
+  "/:id/status",
+  verifyToken,
+  authorizeRoles("admin", "manager"),
+  repair.adminSetStatus
+);
+
+/* ======================================================
+ * ส่วนของช่าง (ถ้ามีเรียกใช้งาน)
+ * ====================================================== */
 router.get(
   "/tech",
   verifyToken,
@@ -62,7 +72,6 @@ router.get(
   repair.getAllRepairs
 );
 
-/** ✅ 9. รายละเอียดงานของช่างทีละงาน */
 router.get(
   "/tech/:id",
   verifyToken,
@@ -70,7 +79,6 @@ router.get(
   repair.getRepairById
 );
 
-/** ✅ 10. ช่างอัปเดตสถานะงาน (เริ่ม / เสร็จสิ้น) */
 router.patch(
   "/tech/:id/status",
   verifyToken,

@@ -1,451 +1,333 @@
-// controllers/repairController.js
-const db = require('../config/db');
+// backend/controllers/repairController.js
+const db = require("../config/db");
+const STATUS = require("./repairStatus");
 
-// ===== Helpers =====
-function makeRepairId() {
-  const now = new Date();
-  const y = String(now.getFullYear()).slice(-2);
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const rnd = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  return `R${y}${m}${d}${rnd}`; // ยาว 10 ตัว
-}
-
-// รับ 'YYYY-MM-DD' หรือ ISO อื่น ๆ แล้วคืน 'YYYY-MM-DD'
-function toDateOnly(str) {
-  if (!str) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  const d = new Date(str);
-  if (isNaN(d.getTime())) return null;
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mm}-${dd}`;
-}
-
-// ===== Controllers =====
+/* ======================================================
+ * 1) สร้างใบแจ้งซ่อม
+ * ====================================================== */
 exports.createRepair = async (req, res) => {
   try {
-    const { title, description, room_id: roomIdInput, image_url } = req.body;
-    const dueRaw = req.body.due_date || req.body.deadline;
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    if (!userId) return res.status(401).json({ message: "ยังไม่ได้เข้าสู่ระบบ" });
 
-    if (!req.user?.id) {
-      return res.status(401).json({ error: 'ยังไม่ได้เข้าสู่ระบบหรือ token หมดอายุ' });
-    }
-    if (!title || !description) {
-      return res.status(400).json({ error: 'title และ description จำเป็นต้องมี' });
-    }
+    const { room_id, title, description, image_url } = req.body;
+    if (!title || !description)
+      return res.status(400).json({ message: "กรุณาระบุเรื่องและรายละเอียดการแจ้งซ่อม" });
 
-    // หา tenant ของผู้ใช้ (ใช้ล่าสุด)
-    const userId = req.user.id;
-    const [tenants] = await db.query(
-      'SELECT tenant_id, room_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
-      [userId]
-    );
-    const tenant = tenants[0];
-    if (!tenant) {
-      return res.status(404).json({ error: 'ยังไม่ได้เชื่อม tenant กับผู้ใช้งานนี้' });
+    let tenant_id = null;
+    if (role === "tenant") {
+      const [rows] = await db.query(
+        "SELECT id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1",
+        [userId]
+      );
+      if (!rows.length)
+        return res.status(403).json({ message: "บัญชีนี้ยังไม่เชื่อมผู้เช่า (tenant)" });
+      tenant_id = rows[0].id;
     }
 
-    // room_id: tenant ต้องแจ้งห้องของตนเอง
-    let roomId = roomIdInput || tenant.room_id || null;
-    if (req.user.role === 'tenant') {
-      if (!tenant.room_id) {
-        return res.status(400).json({ error: 'บัญชีผู้เช่ายังไม่ถูกผูกกับห้อง จึงแจ้งซ่อมไม่ได้' });
-      }
-      if (roomId !== tenant.room_id) {
-        return res.status(403).json({ error: 'คุณไม่มีสิทธิ์แจ้งซ่อมห้องอื่น' });
-      }
-    }
-    if (!roomId) {
-      return res.status(400).json({ error: 'ต้องระบุ room_id' });
-    }
-
-    const dueDate = toDateOnly(dueRaw);
-    if (dueRaw && !dueDate) {
-      return res.status(400).json({ error: 'รูปแบบ due_date/deadline ไม่ถูกต้อง (ควรเป็น YYYY-MM-DD หรือ ISO ที่พาร์สได้)' });
-    }
-
-    // รองรับไฟล์ที่อัปโหลด
     let finalImageUrl = image_url || null;
-    if (req.file && req.file.filename) {
-      finalImageUrl = `/uploads/repairs/${req.file.filename}`;
-    }
+    if (req.file?.filename) finalImageUrl = `/uploads/repairs/${req.file.filename}`;
 
-    // สร้าง repair_id (กันชนด้วย UNIQUE KEY ที่ DB)
-    let repairId = makeRepairId();
-    for (let i = 0; i < 3; i++) {
-      try {
-        await db.query(
-          `INSERT INTO repairs
-            (repair_id, tenant_id, description, assigned_to, status, created_at, updated_at,
-             title, room_id, image_url, due_date)
-           VALUES ( ?, ?, ?, NULL, 'new', NOW(), NOW(),
-                    ?, ?, ?, ? )`,
-          [repairId, tenant.tenant_id, description, title, roomId, finalImageUrl, dueDate]
-        );
-        break; // สำเร็จ
-      } catch (e) {
-        if (e.code === 'ER_DUP_ENTRY') { repairId = makeRepairId(); continue; }
-        throw e;
-      }
-    }
+    await db.query(
+      `INSERT INTO repairs (room_id, tenant_id, title, description, image_url, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [room_id || null, tenant_id, title, description, finalImageUrl, STATUS.NEW]
+    );
 
-    return res.status(201).json({
-      message: 'สร้างใบแจ้งซ่อมสำเร็จ',
-      data: {
-        repair_id: repairId,
-        title,
-        description,
-        room_id: roomId,
-        image_url: finalImageUrl,
-        due_date: dueDate,
-        status: 'new',
-      },
-    });
+    res.status(201).json({ message: "สร้างใบแจ้งซ่อมสำเร็จ" });
   } catch (err) {
-    console.error('🔥 [createRepair] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการสร้างใบแจ้งซ่อม' });
+    console.error("❌ createRepair error:", err);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดในการสร้างใบแจ้งซ่อม" });
   }
 };
 
+/* ======================================================
+ * 2) ดึงรายการซ่อมทั้งหมด (กรองตาม role)
+ * ====================================================== */
+// ดึงรายการซ่อมทั้งหมด (filter ตาม role)
 exports.getAllRepairs = async (req, res) => {
   try {
-    const { role, id: userId } = req.user;
+    const role = req.user.role;
+    const userId = req.user.id;
 
-    if (role === 'tenant') {
-      const [trows] = await db.query(
-        'SELECT tenant_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
-        [userId]
-      );
-      const t = trows[0];
-      if (!t) return res.status(404).json({ error: 'ยังไม่ได้เชื่อม tenant กับผู้ใช้งานนี้' });
-
-      const [rows] = await db.query(
-        `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
-                r.status, r.created_at, r.updated_at, r.assigned_to,
-                u.name AS technician_name
-         FROM repairs r
-         LEFT JOIN users u ON u.id = r.assigned_to
-         WHERE r.tenant_id = ?
-         ORDER BY r.created_at DESC`,
-        [t.tenant_id]
-      );
-      return res.json(rows);
-    }
-
-    if (role === 'technician') {
-      const [rows] = await db.query(
-        `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
-                r.status, r.created_at, r.updated_at, r.assigned_to,
-                u.name AS technician_name
-         FROM repairs r
-         LEFT JOIN users u ON u.id = r.assigned_to
-         WHERE r.assigned_to = ?
-         ORDER BY r.created_at DESC`,
-        [userId]
-      );
-      return res.json(rows);
-    }
-
-    // admin → เห็นทั้งหมด
-    const [rows] = await db.query(
-      `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
-              r.status, r.created_at, r.updated_at, r.assigned_to,
-              u.name AS technician_name
-       FROM repairs r
-       LEFT JOIN users u ON u.id = r.assigned_to
-       ORDER BY r.created_at DESC`
-    );
-    return res.json(rows);
-  } catch (err) {
-    console.error('🔥 [getAllRepairs] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการดึงรายการซ่อม' });
-  }
-};
-
-exports.getRepairById = async (req, res) => {
-  try {
-    const { role, id: userId } = req.user;
-    const { id: repairId } = req.params;
-
-    const [rrows] = await db.query(
-      `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
-              r.status, r.created_at, r.updated_at, r.tenant_id, r.assigned_to,
-              u.name AS technician_name
-       FROM repairs r
-       LEFT JOIN users u ON u.id = r.assigned_to
-       WHERE r.repair_id = ? LIMIT 1`,
-      [repairId]
-    );
-    const repair = rrows[0];
-    if (!repair) return res.status(404).json({ error: 'Repair not found' });
-
-    if (role === 'tenant') {
-      const [trows] = await db.query(
-        'SELECT tenant_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
-        [userId]
-      );
-      const t = trows[0];
-      if (!t || repair.tenant_id !== t.tenant_id) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-    }
-
-    if (role === 'technician' && repair.assigned_to !== userId) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    return res.json(repair);
-  } catch (err) {
-    console.error('🔥 [getRepairById] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการดึงรายละเอียดซ่อม' });
-  }
-};
-
-exports.assignRepair = async (req, res) => {
-  try {
-    const { assigned_to } = req.body;
-    const { id: repairId } = req.params;
-    if (!assigned_to) return res.status(400).json({ error: 'ต้องระบุ assigned_to' });
-
-    // ตรวจว่าช่างมีจริง
-    const [urows] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [assigned_to]);
-    if (!urows.length) return res.status(404).json({ error: 'ไม่พบบุคคลที่ระบุ' });
-
-    // ดึงงานมาก่อน
-    const [rows] = await db.query(
-      'SELECT repair_id, status, assigned_to FROM repairs WHERE repair_id = ? LIMIT 1',
-      [repairId]
-    );
-    const job = rows[0];
-    if (!job) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
-
-    // ถ้าค่าเดิมเป็นคนเดียวกัน → ถือว่าสำเร็จ (idempotent)
-    if (job.assigned_to === Number(assigned_to)) {
-      return res.status(200).json({ message: 'มอบหมายงานสำเร็จ (เดิมอยู่แล้ว)', idempotent: true });
-    }
-
-    const [result] = await db.query(
-      'UPDATE repairs SET assigned_to = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1',
-      [assigned_to, repairId]
-    );
-
-    if (result.affectedRows !== 1) {
-      return res.status(409).json({ error: 'มอบหมายไม่ได้ (ไม่พบงาน หรือมีคนแก้ไขไปแล้ว)' });
-    }
-    return res.json({ message: 'มอบหมายงานสำเร็จ' });
-  } catch (err) {
-    console.error('🔥 [assignRepair] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการมอบหมายงาน' });
-  }
-};
-
-// ===== Update (PATCH /repairs/:id)
-exports.updateRepair = async (req, res) => {
-  try {
-    const { role, id: userId } = req.user || {};
-    if (!userId) {
-      return res.status(401).json({ error: 'ยังไม่ได้เข้าสู่ระบบหรือ token หมดอายุ' });
-    }
-
-    const { id: repairId } = req.params;
-
-    // whitelist
-    const allowed = new Set(['title','description','due_date','deadline','prev_updated_at','prev_updated_at_ts']);
-    const badKey = Object.keys(req.body).find(k => !allowed.has(k));
-    if (badKey) {
-      return res.status(400).json({ error: `ไม่อนุญาตให้แก้ฟิลด์: ${badKey}` });
-    }
-
-    const title = req.body.title;
-    const description = req.body.description;
-    const dueInput = (req.body.due_date ?? req.body.deadline);
-    const prevUpdatedAt = req.body.prev_updated_at;
-    const prevUpdatedAtTs = req.body.prev_updated_at_ts;
-
-    // ดึงงานเป้าหมาย
-    const [rows] = await db.query(
-      `SELECT repair_id, tenant_id, assigned_to, status, room_id, updated_at
-       FROM repairs WHERE repair_id = ? LIMIT 1`,
-      [repairId]
-    );
-    const r = rows[0];
-    if (!r) return res.status(404).json({ error: 'ไม่พบงานซ่อม' });
-
-    // ตรวจสิทธิ์
-    if (role === 'tenant') {
-      const [trows] = await db.query(
-        'SELECT tenant_id FROM tenants WHERE user_id = ? ORDER BY checkin_date DESC LIMIT 1',
-        [userId]
-      );
-      const t = trows[0];
-      if (!t || t.tenant_id !== r.tenant_id) return res.status(403).json({ error: 'Forbidden' });
-      if (r.status !== 'new' || r.assigned_to !== null) {
-        return res.status(409).json({ error: 'แก้ไขไม่ได้หลังถูกมอบหมายหรือเริ่มงานแล้ว', current_status: r.status });
-      }
-    } else if (role === 'technician') {
-      return res.status(403).json({ error: 'ช่างไม่สามารถแก้ไขหัวข้อ/คำอธิบาย/กำหนดเส้นตาย' });
-    } else if (!['admin', 'manager'].includes(role)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    // เตรียมฟิลด์
-    const fields = [];
+    let sql = `
+      SELECT 
+        r.*,
+        rm.room_number AS room_no,
+        COALESCE(NULLIF(tu.fullname,''), NULLIF(tu.name,''), tu.email) AS tenant_name,
+        COALESCE(NULLIF(tech.fullname,''), NULLIF(tech.name,''), tech.email) AS technician_name,
+        COALESCE(r.assigned_technician_id, r.assigned_to) AS assigned_to
+      FROM repairs r
+      LEFT JOIN rooms rm   ON rm.room_id    = r.room_id
+      LEFT JOIN tenants t  ON t.tenant_id   = r.tenant_id          -- ✅ แก้ตรงนี้
+      LEFT JOIN users tu   ON tu.id         = t.user_id
+      LEFT JOIN users tech ON tech.id       = COALESCE(r.assigned_technician_id, r.assigned_to)
+      WHERE 1=1
+    `;
     const params = [];
 
-    if (title !== undefined) {
-      fields.push('title = ?');
-      params.push(String(title).trim());
-    }
-    if (description !== undefined) {
-      fields.push('description = ?');
-      params.push(description);
-    }
-    if (dueInput !== undefined) {
-      const d = toDateOnly(dueInput);
-      if (dueInput && !d) {
-        return res.status(400).json({ error: 'รูปแบบ due_date/deadline ไม่ถูกต้อง (ควรเป็น YYYY-MM-DD หรือ ISO ที่พาร์สได้)' });
-      }
-      fields.push('due_date = ?');
-      params.push(d);
+    if (role === "tenant") {
+      sql += " AND r.tenant_id IN (SELECT tenant_id FROM tenants WHERE user_id = ?)";
+      params.push(userId);
+    } else if (role === "technician") {
+      sql += " AND COALESCE(r.assigned_technician_id, r.assigned_to) = ?";
+      params.push(userId);
     }
 
-    if (!fields.length) {
-      return res.status(400).json({ error: 'ไม่มีฟิลด์ที่จะแก้ไข (title/description/due_date)' });
-    }
+    sql += " ORDER BY r.created_at DESC";
 
-    // อัปเดต + optimistic lock
-    let sql = `UPDATE repairs SET ${fields.join(', ')}, updated_at = NOW() WHERE repair_id = ?`;
-    params.push(repairId);
-
-    if (prevUpdatedAtTs !== undefined) {
-      sql += ' AND (UNIX_TIMESTAMP(updated_at) * 1000) = ?';
-      params.push(Number(prevUpdatedAtTs));
-    } else if (prevUpdatedAt) {
-      sql += ' AND updated_at = ?';
-      params.push(new Date(prevUpdatedAt));
-    }
-
-    const [result] = await db.query(sql, params);
-    if ((prevUpdatedAt || prevUpdatedAtTs !== undefined) && result.affectedRows === 0) {
-      return res.status(409).json({ error: 'ข้อมูลถูกแก้ไขไปก่อนหน้าแล้ว กรุณารีเฟรช' });
-    }
-
-    const [out] = await db.query(
-      `SELECT r.repair_id, r.title, r.description, r.room_id, r.image_url, r.due_date,
-              r.status, r.created_at, r.updated_at, r.assigned_to,
-              u.name AS technician_name
-       FROM repairs r
-       LEFT JOIN users u ON u.id = r.assigned_to
-       WHERE r.repair_id = ? LIMIT 1`,
-      [repairId]
-    );
-
-    return res.json({ message: 'อัปเดตสำเร็จ', data: out[0] });
+    const [rows] = await db.query(sql, params);
+    const out = rows.map(r => ({ ...r, status: String(r.status || '').toLowerCase() }));
+    res.json(out);
   } catch (err) {
-    console.error('🔥 [updateRepair] error:', err);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการอัปเดตใบแจ้งซ่อม' });
+    console.error("❌ getAllRepairs error:", err);
+    res.status(500).json({ message: "ไม่สามารถดึงรายการแจ้งซ่อมได้" });
   }
 };
 
+// ดึงรายละเอียดงานซ่อมทีละรายการ
+exports.getRepairById = async (req, res) => {
+  try {
+    const { id } = req.params; // repair_id
+    const [rows] = await db.query(
+      `
+      SELECT 
+        r.*,
+        rm.room_number AS room_no,
+        COALESCE(NULLIF(tu.fullname,''), NULLIF(tu.name,''), tu.email) AS tenant_name,
+        COALESCE(NULLIF(tech.fullname,''), NULLIF(tech.name,''), tech.email) AS technician_name,
+        COALESCE(r.assigned_technician_id, r.assigned_to) AS assigned_to
+      FROM repairs r
+      LEFT JOIN rooms rm   ON rm.room_id    = r.room_id
+      LEFT JOIN tenants t  ON t.tenant_id   = r.tenant_id          -- ✅ แก้ตรงนี้
+      LEFT JOIN users tu   ON tu.id         = t.user_id
+      LEFT JOIN users tech ON tech.id       = COALESCE(r.assigned_technician_id, r.assigned_to)
+      WHERE r.repair_id = ?
+      `,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ message: "ไม่พบงานซ่อมนี้" });
+    const r = rows[0];
+    r.status = String(r.status || "").toLowerCase();
+    res.json(r);
+  } catch (err) {
+    console.error("❌ getRepairById error:", err);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดในการดึงข้อมูลงานซ่อม" });
+  }
+};
+
+
+
+/* ======================================================
+ * 3) รายละเอียดงาน
+ * ====================================================== */
+exports.getRepairById = async (req, res) => {
+  try {
+    const { id } = req.params; // repair_id
+    const [rows] = await db.query(
+      `
+      SELECT 
+        r.*,
+        rm.room_number AS room_no,
+        COALESCE(NULLIF(tu.fullname,''), NULLIF(tu.name,''), tu.email) AS tenant_name,
+        COALESCE(NULLIF(tech.fullname,''), NULLIF(tech.name,''), tech.email) AS technician_name,
+        COALESCE(r.assigned_technician_id, r.assigned_to) AS assigned_to
+      FROM repairs r
+      LEFT JOIN rooms rm   ON rm.room_id    = r.room_id
+      LEFT JOIN tenants t  ON t.tenant_id   = r.tenant_id          -- ✅ แก้ตรงนี้
+      LEFT JOIN users tu   ON tu.id         = t.user_id
+      LEFT JOIN users tech ON tech.id       = COALESCE(r.assigned_technician_id, r.assigned_to)
+      WHERE r.repair_id = ?
+      `,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ message: "ไม่พบงานซ่อมนี้" });
+    const r = rows[0];
+    r.status = String(r.status || "").toLowerCase();
+    res.json(r);
+  } catch (err) {
+    console.error("❌ getRepairById error:", err);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดในการดึงข้อมูลงานซ่อม" });
+  }
+};
+
+/* ======================================================
+ * 4) อัปเดตข้อมูลงาน
+ * ====================================================== */
+exports.updateRepair = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, image_url, room_id } = req.body;
+
+    await db.query(
+      `UPDATE repairs
+       SET title = ?, description = ?, image_url = ?, room_id = ?, updated_at = NOW()
+       WHERE repair_id = ?`,
+      [title, description, image_url || null, room_id || null, id]
+    );
+
+    res.json({ message: "อัปเดตข้อมูลงานซ่อมสำเร็จ" });
+  } catch (err) {
+    console.error("❌ updateRepair error:", err);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดในการแก้ไขงานซ่อม" });
+  }
+};
+
+/* ======================================================
+ * 5) ลบงาน (admin)
+ * ====================================================== */
 exports.deleteRepair = async (req, res) => {
   try {
-    if (!req.user || req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Forbidden', code: 'ROLE_FORBIDDEN' });
-    }
-    const { id: repairId } = req.params;
-    if (!repairId) {
-      return res.status(400).json({ error: 'Missing repair id', code: 'BAD_REQUEST' });
-    }
-    const [result] = await db.query(
-      'DELETE FROM repairs WHERE repair_id = ? LIMIT 1',
-      [repairId]
-    );
-    if (result.affectedRows !== 1) {
-      return res.status(404).json({ error: 'Repair not found', code: 'NOT_FOUND' });
-    }
-    return res.json({ message: 'ลบงานซ่อมสำเร็จ' });
-  } catch (e) {
-    console.error('🔥 [deleteRepair] error:', e);
-    return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการลบงานซ่อม' });
+    const { id } = req.params;
+    await db.query("DELETE FROM repairs WHERE repair_id = ?", [id]);
+    res.json({ message: "ลบงานซ่อมเรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("❌ deleteRepair error:", err);
+    res.status(500).json({ message: "ไม่สามารถลบงานซ่อมได้" });
   }
 };
 
-// ดึงรายชื่อช่างสำหรับ dropdown
-exports.listTechnicians = async (_req, res) => {
+/* ======================================================
+ * 6) รายชื่อช่าง (ใช้ชื่อจริง)
+ * ====================================================== */
+exports.listTechnicians = async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT
-        u.id,
-        COALESCE(NULLIF(u.name,''), u.email, CONCAT('Tech#', u.id)) AS name,
-        t.expertise,
-        t.available AS available
-      FROM users u
-      LEFT JOIN technicians t ON t.user_id = u.id
-      WHERE LOWER(u.role) = 'technician'
-        AND (u.status IS NULL OR LOWER(u.status) IN ('active','1','true'))
-      ORDER BY name ASC, u.id ASC
+      SELECT 
+        id,
+        COALESCE(NULLIF(fullname,''), NULLIF(name,''), LEFT(email, LOCATE('@', email) - 1), CONCAT('Tech#', id)) AS name,
+        email
+      FROM users
+      WHERE role = 'technician'
+        AND (status IS NULL OR LOWER(status) IN ('active','1','true'))
+      ORDER BY name ASC, id ASC
     `);
-
-    const out = rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      expertise: r.expertise ?? null,
-      available: r.available ?? 1,
-    }));
-
-    return res.json(out);
-  } catch (e) {
-    console.error('🔥 [listTechnicians] error:', e);
-    return res.status(500).json({ error: 'โหลดรายชื่อช่างไม่สำเร็จ' });
+    const out = rows.map(r => ({ id: r.id, name: r.name, email: r.email }));
+    res.json(out);
+  } catch (err) {
+    console.error("❌ listTechnicians error:", err);
+    res.status(500).json({ message: "ไม่สามารถดึงรายชื่อช่างได้" });
   }
 };
 
-
-// ===== Technician update status =====
-exports.techSetStatus = async (req, res) => {
+/* ======================================================
+ * 7) มอบหมายงาน (admin/manager)  ← ใช้กับ FE: PATCH /api/repairs/:id/assign
+ *    รองรับทั้ง body.assigned_to และ body.technician_id
+ * ====================================================== */
+exports.assignRepair = async (req, res) => {
   try {
-    const { id: repairId } = req.params;
-    const { action } = req.body || {};
-    const { id: userId } = req.user;
+    const { id } = req.params; // repair_id
+    const techId = req.body.assigned_to ?? req.body.technician_id;
+    if (!techId) return res.status(400).json({ error: "ต้องระบุ assigned_to" });
 
-    // แปลง action เป็นสถานะ
-    const map = {
-      start: "in_progress",
-      complete: "done",
-    };
-    const newStatus = map[action];
-    if (!newStatus)
-      return res.status(400).json({ error: "action ไม่ถูกต้อง (ต้องเป็น start หรือ complete)" });
+    const [chk] = await db.query("SELECT status FROM repairs WHERE repair_id = ? LIMIT 1", [id]);
+    if (!chk.length) return res.status(404).json({ message: "ไม่พบงานซ่อมนี้" });
 
-    // ตรวจว่างานนี้เป็นของช่างเอง
-    const [rows] = await db.query(
-      "SELECT repair_id, assigned_to, status FROM repairs WHERE repair_id = ? LIMIT 1",
-      [repairId]
+    // มอบหมายได้จากสถานะ NEW/ASSIGNED (idempotent)
+    await db.query(
+      `UPDATE repairs
+       SET assigned_technician_id = ?, status = ?, updated_at = NOW()
+       WHERE repair_id = ?`,
+      [Number(techId), STATUS.ASSIGNED, id]
     );
-    const r = rows[0];
-    if (!r) return res.status(404).json({ error: "ไม่พบงานซ่อม" });
-    if (r.assigned_to !== userId)
-      return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้" });
 
-    // ป้องกันการ complete ซ้ำ
-    if (r.status === "done" && newStatus === "done") {
-      return res.status(200).json({ message: "งานนี้เสร็จสิ้นแล้ว" });
+    res.json({ message: "มอบหมายงานให้ช่างสำเร็จ" });
+  } catch (err) {
+    console.error("❌ assignRepair error:", err);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดในการมอบหมายงาน" });
+  }
+};
+
+/* ======================================================
+ * 8) แอดมินเปลี่ยนสถานะ (ใช้สำหรับปุ่ม 'ปฏิเสธ')
+ *    FE เรียก: PATCH /api/repairs/:id/status  { status: "rejected" }
+ * ====================================================== */
+exports.adminSetStatus = async (req, res) => {
+  try {
+    const { id } = req.params;        // repair_id
+    const { status } = req.body || {};
+    const allowed = new Set([STATUS.REJECTED, STATUS.CANCELLED, STATUS.NEW, STATUS.ASSIGNED]);
+    if (!allowed.has(status)) {
+      return res.status(400).json({ message: "สถานะไม่ถูกต้อง" });
     }
 
-    // อัปเดตสถานะ
-    const [result] = await db.query(
-      "UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ? LIMIT 1",
-      [newStatus, repairId]
+    await db.query(
+      "UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ?",
+      [status, id]
+    );
+    res.json({ message: `อัปเดตสถานะเป็น ${status} สำเร็จ` });
+  } catch (err) {
+    console.error("❌ adminSetStatus error:", err);
+    res.status(500).json({ message: "ไม่สามารถอัปเดตสถานะได้" });
+  }
+};
+
+/* ======================================================
+ * 9) ช่างเปลี่ยนสถานะ (เริ่ม/เสร็จสิ้น)
+ * ====================================================== */
+// ช่างอัปเดตสถานะงาน (เริ่ม/เสร็จสิ้น)
+exports.techSetStatus = async (req, res) => {
+  try {
+    const repairId = req.params.id;
+    const techId = req.user.id;
+    const { action, status } = req.body || {};
+
+    // แปลงคำขอเป็นสถานะที่ต้องการ
+    const want =
+      action === "start" || String(status || "").toLowerCase() === "in_progress"
+        ? "in_progress"
+        : action === "complete" || String(status || "").toLowerCase() === "done"
+        ? "done"
+        : null;
+
+    if (!want) {
+      return res.status(400).json({ error: "action ต้องเป็น start หรือ complete" });
+    }
+
+    // ดึงงานที่ 'เป็นของช่างคนนี้' เท่านั้น
+    const [rows] = await db.query(
+      `SELECT status
+         FROM repairs
+        WHERE repair_id = ?
+          AND COALESCE(assigned_technician_id, assigned_to) = ? 
+        LIMIT 1`,
+      [repairId, techId]
     );
 
-    if (result.affectedRows !== 1)
-      return res.status(409).json({ error: "อัปเดตสถานะไม่สำเร็จ" });
+    if (!rows.length) {
+      return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้ หรือไม่พบนายซ่อม" });
+    }
 
-    return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: newStatus });
+    const current = String(rows[0].status || "").toLowerCase();
+
+    // ตรวจเงื่อนไขการเปลี่ยนสถานะ
+    if (want === "in_progress" && current !== "assigned") {
+      return res
+        .status(409)
+        .json({ error: `สถานะปัจจุบันคือ '${current}' จึงเริ่มงานไม่ได้ (ต้องเป็น 'assigned')` });
+    }
+    if (want === "done" && current !== "in_progress") {
+      return res
+        .status(409)
+        .json({ error: `สถานะปัจจุบันคือ '${current}' จึงเสร็จสิ้นไม่ได้ (ต้องเป็น 'in_progress')` });
+    }
+
+    // อัปเดต (บันทึกเวลาเริ่ม/เสร็จด้วย)
+    await db.query(
+      `UPDATE repairs
+          SET status = ?,
+              started_at   = IF(? = 'in_progress', NOW(), started_at),
+              completed_at = IF(? = 'done',        NOW(), completed_at),
+              updated_at   = NOW()
+        WHERE repair_id = ?`,
+      [want, want, want, repairId]
+    );
+
+    return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: want });
   } catch (err) {
     console.error("🔥 [techSetStatus] error:", err);
     return res.status(500).json({ error: "เกิดข้อผิดพลาดในการอัปเดตสถานะ" });
   }
 };
+

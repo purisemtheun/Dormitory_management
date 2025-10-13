@@ -13,7 +13,6 @@ const api = {
     return Array.isArray(d) ? d : [];
   },
 
-  // ✅ ใช้ปลายทางที่แบ็กเอนด์เปิดจริง: /api/repairs/technicians → fallback /api/technicians
   listTechnicians: async () => {
     const headers = { Authorization: `Bearer ${getToken()}` };
     const tryOnce = async (url) => {
@@ -22,8 +21,8 @@ const api = {
       if (!r.ok) throw new Error(d?.error || `GET ${url} failed`);
       const arr = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []);
       return arr.map((x) => ({
-        id: x.id ?? x.user_id ?? x.uid,
-        name: x.name ?? x.full_name ?? x.username ?? x.email ?? `Tech#${x.id ?? x.user_id ?? x.uid}`,
+        id: x.id,
+        name: x.name || `Tech#${x.id}`,
       }));
     };
     try {
@@ -37,6 +36,7 @@ const api = {
     }
   },
 
+  // มอบหมายงานให้ช่าง
   assign: async (repairId, techId) => {
     const r = await fetch(`/api/repairs/${encodeURIComponent(repairId)}/assign`, {
       method: "PATCH",
@@ -51,17 +51,14 @@ const api = {
     return d;
   },
 
-  setStatus: async (repairId, status) => {
-    const r = await fetch(`/api/repairs/${encodeURIComponent(repairId)}/status`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-      },
-      body: JSON.stringify({ status }),
+  // ลบงาน (ปฏิเสธ)
+  deleteRepair: async (repairId) => {
+    const r = await fetch(`/api/repairs/${encodeURIComponent(repairId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || "อัปเดตสถานะไม่สำเร็จ");
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d?.error || "ลบงานไม่สำเร็จ");
     return d;
   },
 };
@@ -114,10 +111,12 @@ export default function AdminRepairManagement() {
 
   useEffect(() => { load(); }, []);
 
-  const filtered = useMemo(() => {
+  // ✅ แสดงเฉพาะงานที่ "ยังไม่ถูกมอบหมาย" (status = new) เท่านั้น
+  const visible = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return items;
-    return items.filter((r) =>
+    const base = items.filter((r) => String(r.status || "").toLowerCase() === "new");
+    if (!s) return base;
+    return base.filter((r) =>
       String(r.repair_id).toLowerCase().includes(s) ||
       String(r.title || "").toLowerCase().includes(s) ||
       String(r.room_id || "").toLowerCase().includes(s) ||
@@ -125,13 +124,15 @@ export default function AdminRepairManagement() {
     );
   }, [items, q]);
 
+  // ✅ มอบหมายแล้ว ซ่อนแถวทันที (ไม่ reload ทั้งหน้า)
   const assign = async (rid) => {
     const techId = assignSel[rid];
     if (!techId) return alert("กรุณาเลือกช่างก่อนมอบหมาย");
     try {
       setBusyId(rid);
       await api.assign(rid, techId);
-      await load();
+      // ลบออกจากตารางทันที
+      setItems((list) => list.filter((x) => x.repair_id !== rid));
     } catch (e) {
       alert(e.message);
     } finally {
@@ -139,12 +140,13 @@ export default function AdminRepairManagement() {
     }
   };
 
+  // ✅ ปฏิเสธ = ลบงานออกจากระบบ (และลบออกจากตารางทันที)
   const reject = async (rid) => {
-    if (!window.confirm("ยืนยันปฏิเสธงานนี้?")) return;
+    if (!window.confirm("ยืนยันลบงานนี้ทิ้งถาวร?")) return;
     try {
       setBusyId(rid);
-      await api.setStatus(rid, "rejected");
-      await load();
+      await api.deleteRepair(rid);
+      setItems((list) => list.filter((x) => x.repair_id !== rid));
     } catch (e) {
       alert(e.message);
     } finally {
@@ -174,9 +176,9 @@ export default function AdminRepairManagement() {
         <div style={card}>
           {loading && <p className="muted" style={{ margin: 0 }}>กำลังโหลดรายการ…</p>}
           {!loading && err && <p style={{ color: "#b91c1c", margin: 0 }}>{err}</p>}
-          {!loading && !err && filtered.length === 0 && <p className="muted" style={{ margin: 0 }}>– ไม่มีรายการ –</p>}
+          {!loading && !err && visible.length === 0 && <p className="muted" style={{ margin: 0 }}>– ไม่มีรายการ –</p>}
 
-          {!loading && !err && filtered.length > 0 && (
+          {!loading && !err && visible.length > 0 && (
             <div style={{ overflowX: "auto", borderRadius: 10 }}>
               <table style={{ width: "100%", minWidth: 1000, borderCollapse: "separate", borderSpacing: 0 }}>
                 <thead>
@@ -192,7 +194,7 @@ export default function AdminRepairManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((r) => (
+                  {visible.map((r) => (
                     <tr key={r.repair_id}>
                       <td style={td}>{r.repair_id}</td>
                       <td style={td}>
@@ -210,19 +212,20 @@ export default function AdminRepairManagement() {
                       <td style={td}>{r.technician_name || (r.assigned_to ? `Tech#${r.assigned_to}` : "—")}</td>
                       <td style={td}>
                         <select
+                          disabled={busyId === r.repair_id || loading}
                           value={assignSel[r.repair_id] ?? ""}
                           onChange={(e) => setAssignSel((s) => ({ ...s, [r.repair_id]: e.target.value }))}
-                          onMouseDown={(e) => e.stopPropagation()} // กัน event bubble ไปครอบทับ
+                          onMouseDown={(e) => e.stopPropagation()}
                           style={{
                             width: "100%",
                             padding: "8px 10px",
                             borderRadius: 8,
                             border: "1px solid #e5e7eb",
-                            position: "relative",
-                            zIndex: 2,               // กันโดน overlay/scroll mask
                           }}
                         >
-                          {techs.length === 0 ? (
+                          {loading ? (
+                            <option value="">— กำลังโหลดรายชื่อช่าง... —</option>
+                          ) : techs.length === 0 ? (
                             <option value="">— ไม่มีช่าง —</option>
                           ) : (
                             <>
@@ -238,7 +241,7 @@ export default function AdminRepairManagement() {
                         <div style={{ display: "flex", gap: 8 }}>
                           <button
                             className="btn"
-                            disabled={busyId === r.repair_id || techs.length === 0}
+                            disabled={busyId === r.repair_id || techs.length === 0 || !assignSel[r.repair_id]}
                             onClick={() => assign(r.repair_id)}
                             title="มอบหมายช่าง"
                           >
@@ -248,7 +251,7 @@ export default function AdminRepairManagement() {
                             className="btn btn-danger"
                             disabled={busyId === r.repair_id}
                             onClick={() => reject(r.repair_id)}
-                            title="ปฏิเสธงาน"
+                            title="ปฏิเสธ (ลบงานนี้)"
                           >
                             ❌ ปฏิเสธ
                           </button>
@@ -265,5 +268,3 @@ export default function AdminRepairManagement() {
     </div>
   );
 }
-
-
