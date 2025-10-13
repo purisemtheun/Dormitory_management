@@ -13,9 +13,12 @@ import RegisterPage from "../pages/auth/RegisterPage";
 // Admin pages
 import AdminRoomManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
-import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage"; // ฟอร์ม
-import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";           // ตาราง review
+import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";  // ฟอร์มออกบิล
+import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";            // ตารางรีวิว/อนุมัติการจ่าย
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
+
+// ✅ เพิ่มหน้า “ค้นหาหนี้”
+import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
@@ -28,12 +31,18 @@ import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
 import { getToken, getRole } from "../utils/auth";
 
 /* Guards */
-const RequireAuth = ({ children }) => (getToken() ? children : <Navigate to="/login" replace />);
+const RequireAuth = ({ children }) =>
+  getToken() ? children : <Navigate to="/login" replace />;
+
 const RequireAdmin = ({ children }) => {
   const role = getRole();
-  return role === "admin" || role === "staff" ? children : <Navigate to="/login" replace />;
+  return role === "admin" || role === "staff"
+    ? children
+    : <Navigate to="/login" replace />;
 };
-const RequireTechnician = ({ children }) => (getRole() === "technician" ? children : <Navigate to="/login" replace />);
+
+const RequireTechnician = ({ children }) =>
+  getRole() === "technician" ? children : <Navigate to="/login" replace />;
 
 const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
@@ -70,11 +79,15 @@ const router = createBrowserRouter([
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
 
-      // ✅ ชี้ชัด: payments = ฟอร์ม, payments/review = ตาราง
+      // ฟอร์มสร้างบิล และรีวิวการชำระ
       { path: "payments", element: <AdminInvoiceCreatePage /> },
       { path: "payments/review", element: <AdminPaymentsPage /> },
 
+      // จัดการงานซ่อม
       { path: "repairs", element: <AdminRepairManagement /> },
+
+      // ✅ หน้า “ค้นหาหนี้” ของแอดมิน
+      { path: "debts", element: <AdminDebtSearchPage /> },
     ],
   },
 

@@ -9,7 +9,12 @@ function AdminSidebarInline() {
   const [repairsOpen, setRepairsOpen] = useState(false);
 
   useEffect(() => {
-    if (location.pathname.startsWith("/admin/payments")) setPaymentsOpen(true);
+    if (
+      location.pathname.startsWith("/admin/payments") ||
+      location.pathname.startsWith("/admin/debts") // ✅ เปิดเมนูเมื่อเข้าเพจค้นหาหนี้
+    ) {
+      setPaymentsOpen(true);
+    }
     if (location.pathname.startsWith("/admin/repairs")) setRepairsOpen(true);
   }, [location.pathname]);
 
@@ -79,7 +84,6 @@ function AdminSidebarInline() {
 
   const handleLogout = () => {
     try {
-      // เคลียร์ได้ทั้งสองแบบ เพื่อครอบคลุมทุกเคสที่โค้ดอื่นอาจใช้
       localStorage.removeItem("auth");
       localStorage.removeItem("token");
       localStorage.removeItem("role");
@@ -99,7 +103,7 @@ function AdminSidebarInline() {
       <LinkItem to="/admin/rooms">จัดการห้อง</LinkItem>
       <LinkItem to="/admin/tenants">จัดการผู้เช่า</LinkItem>
 
-      {/* การชำระเงิน */}
+      {/* การชำระเงิน & หนี้ */}
       <div
         style={S.toggle}
         onClick={() => setPaymentsOpen(v => !v)}
@@ -107,12 +111,13 @@ function AdminSidebarInline() {
         onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "transparent" })}
         aria-expanded={paymentsOpen}
       >
-        <span>การชำระเงิน</span>
+        <span>การชำระเงิน / หนี้</span>
         <span style={{ transform: paymentsOpen ? "rotate(180deg)" : "rotate(0deg)", transition: ".12s" }}>▼</span>
       </div>
       {paymentsOpen && (
         <div style={S.subWrap}>
-          {/* ✅ ชี้ path ให้ตรงกับ routes.jsx */}
+          {/* ✅ ให้ตรงกับ routes.jsx */}
+          <SubLinkItem to="/admin/debts">ค้นหาหนี้ผู้เช่า</SubLinkItem>
           <SubLinkItem to="/admin/payments/review">อนุมัติการชำระเงิน</SubLinkItem>
           <SubLinkItem to="/admin/payments">ออกใบแจ้งหนี้</SubLinkItem>
         </div>

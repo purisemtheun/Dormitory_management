@@ -15,8 +15,7 @@ const repairRoutes  = require('./routes/repairRoutes');
 const roomRoutes    = require('./routes/roomRoutes');
 const adminRoutes   = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
-const debtRoutes = require('./routes/debtRoutes');
-
+const debtRoutes    = require('./routes/debtRoutes.js');
 
 // ❗️ไฟล์สามตัวด้านล่างต้อง export แบบ CommonJS:  module.exports = router
 const adminProofs   = require('./routes/admin.paymentProofs');
@@ -27,7 +26,7 @@ const adminProofs   = require('./routes/admin.paymentProofs');
 const { requireAuth } = require('./middlewares/auth');
 const paymentCtrl     = require('./controllers/paymentController');
 
-// 👉 ใช้สำหรับ alias /api/technicians
+// 👉 ใช้สำหรับ alias /api/technicians (มี RBAC หลายบทบาท)
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
 const repairController = require('./controllers/repairController');
 
@@ -59,8 +58,6 @@ app.use('/api/repairs',  repairRoutes);
 app.use('/api/rooms',    roomRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/debts', debtRoutes);
-
 
 // ให้หน้า frontend เก่าที่เรียก /api/invoices ยังใช้ได้
 app.get('/api/invoices', requireAuth, (req, res, next) =>
@@ -96,9 +93,11 @@ app.get(
   repairController.getRepairById
 );
 
+// ✅ ใช้ authorizeRoles('admin') แทน requireRole('admin')
+app.use('/api/debts', verifyToken, authorizeRoles('admin'), debtRoutes);
 
-app.use('/api/admin',  adminProofs);
-
+// เส้นทางย่อยของแอดมิน (payment proofs)
+app.use('/api/admin', adminProofs);
 
 /* =========================
  * 404 (ไว้ท้ายสุดของ routes)
