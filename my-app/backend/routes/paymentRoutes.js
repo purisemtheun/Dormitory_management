@@ -1,3 +1,4 @@
+// routes/paymentRoutes.js
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
@@ -28,5 +29,8 @@ router.get('/qr', paymentCtrl.getActiveQR);
 
 // POST /api/payments/submit (multipart) - ต้อง login
 router.post('/submit', requireAuth, upload.single('slip'), paymentCtrl.submitPayment);
+
+router.post('/approve', requireAuth, paymentCtrl.approvePayment);
+router.post('/reject',  requireAuth, paymentCtrl.rejectPayment);
 
 module.exports = router;

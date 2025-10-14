@@ -33,9 +33,9 @@ export default function AdminInvoiceCreatePage() {
 
   // form state
   const [tenantId, setTenantId] = useState("");
-  const [periodYm, setPeriodYm] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [amount, setAmount] = useState("");
+  const [periodYm, setPeriodYm] = useState(""); // YYYY-MM
+  const [dueDate, setDueDate] = useState("");   // YYYY-MM-DD
+  const [amount, setAmount] = useState("");     // string input
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -44,7 +44,7 @@ export default function AdminInvoiceCreatePage() {
         setLoading(true);
         setErr("");
         const list = await api.getTenants();
-        setTenants(list.filter(t => (t.is_deleted ?? 0) === 0));
+        setTenants(list.filter((t) => (t.is_deleted ?? 0) === 0));
       } catch (e) {
         setErr(e.message || "โหลดผู้เช่าไม่สำเร็จ");
       } finally {
@@ -55,20 +55,29 @@ export default function AdminInvoiceCreatePage() {
 
   const submitOne = async (e) => {
     e.preventDefault();
-    if (!tenantId || !periodYm || !amount || !dueDate) {
-      return alert("กรอกให้ครบ: ผู้เช่า / เดือนงวด / ยอดเงิน / กำหนดชำระ");
+
+    const amt = Number(amount);
+    if (!tenantId || !periodYm || !dueDate || !amt || amt <= 0) {
+      return alert("กรอกให้ครบและถูกต้อง: ผู้เช่า / เดือนงวด / กำหนดชำระ / ยอดเงิน (> 0)");
     }
+
+    // safety: ตัดช่องว่าง, รูปแบบวันที่
+    const payload = {
+      tenant_id: String(tenantId).trim(),   // ← ส่งเป็น string ตรงสคีมา
+      period_ym: String(periodYm).trim(),   // YYYY-MM
+      amount: amt,                          // number
+      due_date: String(dueDate).slice(0, 10), // YYYY-MM-DD
+    };
+
     try {
       setBusy(true);
       setErr("");
-      await api.createInvoice({
-        tenant_id: Number(tenantId),
-        period_ym: periodYm.trim(),
-        amount: Number(amount),
-        due_date: dueDate,
-      });
+      await api.createInvoice(payload);
       alert("ออกใบแจ้งหนี้สำเร็จ");
-      setTenantId(""); setPeriodYm(""); setAmount(""); setDueDate("");
+      setTenantId("");
+      setPeriodYm("");
+      setAmount("");
+      setDueDate("");
     } catch (e2) {
       setErr(e2.message || "ออกใบแจ้งหนี้ไม่สำเร็จ");
     } finally {
@@ -120,6 +129,7 @@ export default function AdminInvoiceCreatePage() {
               <div>
                 <label style={label}>เดือนงวด (YYYY-MM)</label>
                 <input
+                  type="month"                        // ← บังคับฟอร์แมต
                   placeholder="2025-11"
                   value={periodYm}
                   onChange={(e) => setPeriodYm(e.target.value)}
@@ -143,11 +153,15 @@ export default function AdminInvoiceCreatePage() {
               <label style={label}>ยอดเงิน (บาท)</label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="0.01"
+                min="0"
+                placeholder="เช่น 3000.00"         // ← แค่ตัวอย่าง ไม่เติมค่า
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 style={input}
                 disabled={busy}
+                required
               />
             </div>
 
