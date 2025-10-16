@@ -1,5 +1,13 @@
-import api from './api';
+import http from './http';
 
-export const fetchDebtSummary = () => api.get('/debts/summary');
-export const searchDebts = (params) => api.get('/debts/search', { params });
-export const getTenantDebtDetail = (tenantId) => api.get(`/debts/tenant/${tenantId}`);
+// สรุปหัวการ์ด
+export function fetchDebtSummary() {
+  // เดิม: return http.get('/api/debts/summary');
+  return http.get('/api/admin/debts/summary');
+}
+
+// ค้นหาในตาราง
+export function searchDebts(params) {
+  // เดิม: return http.get('/api/debts/search', { params });
+  return http.get('/api/admin/debts/search', { params });
+}

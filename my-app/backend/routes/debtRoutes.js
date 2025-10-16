@@ -1,15 +1,12 @@
-// routes/debtRoutes.js
+// backend/routes/debtRoutes.js
 const express = require('express');
-const {
-  searchDebts,
-  getTenantDebtDetail,
-  getDebtSummaryDashboard
-} = require('../controllers/debtController.js');
-
 const router = express.Router();
+const debtCtrl = require('../controllers/debtController');
 
-router.get('/search', searchDebts);
-router.get('/tenant/:tenantId', getTenantDebtDetail);
-router.get('/summary', getDebtSummaryDashboard);
+// สรุป
+router.get('/summary', debtCtrl.getDebtSummary);
+
+// ค้นหา
+router.get('/search', debtCtrl.searchDebts);
 
 module.exports = router;

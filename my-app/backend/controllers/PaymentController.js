@@ -1,9 +1,13 @@
-// backend/controllers/paymentController.js
+/**
+ * PATH: backend/controllers/paymentController.js
+ * PURPOSE: จัดการชำระเงิน/สลิป ตามสคีมาปัจจุบันของโปรเจกต์
+ */
+
 const path = require('path');
 const db = require('../config/db');
 
 /* ------------------------------------------------------------------ */
-/* Helper: หา tenant_id ของ user ปัจจุบัน (คงเดิม)                   */
+/* Helper: หา tenant_id ของ user ปัจจุบัน                              */
 /* ------------------------------------------------------------------ */
 async function getTenantIdByUser(userId) {
   const [[row]] = await db.query(
@@ -19,11 +23,11 @@ async function getTenantIdByUser(userId) {
 }
 
 /* ------------------------------------------------------------------ */
-/* NEW: รีคำนวณตารางสรุปหนี้เฉพาะผู้เช่า (ใช้กับ schema ปัจจุบัน) */
+/* NEW: รีคำนวณตารางสรุปหนี้เฉพาะผู้เช่า (ถ้าใช้ summary table)     */
 /* ------------------------------------------------------------------ */
 async function recalcTenantDebt(conn, tenantId) {
-  // 1) อัปเดตสถานะ invoices ของ tenant นี้ ให้สอดคล้องกับยอดที่ "approved" แล้วใน payments
-  await conn.query(`
+  await conn.query(
+    `
     UPDATE invoices i
     LEFT JOIN (
       SELECT invoice_id, SUM(amount) AS paid
@@ -36,34 +40,42 @@ async function recalcTenantDebt(conn, tenantId) {
       WHEN IFNULL(p.paid,0) > 0 THEN 'partial'
       ELSE 'unpaid'
     END
-    WHERE i.tenant_id = ?
-  `, [tenantId]);
+    WHERE i.tenant_id = ?`,
+    [tenantId]
+  );
 
-  // 2) REPLACE summary ของ tenant นี้ทันที
-  await conn.query(`
+  await conn.query(
+    `
     REPLACE INTO tenant_debt_summary
       (tenant_id, outstanding, last_due, overdue_days, updated_at)
     SELECT
       i.tenant_id,
-      SUM(GREATEST(
-            CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END
-            - IFNULL(p.paid,0), 0
-          )) AS outstanding,
-      MAX(CASE
-            WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
-            THEN i.due_date
-          END) AS last_due,
+      SUM(
+        GREATEST(
+          CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0),
+        0)
+      ) AS outstanding,
+      MAX(
+        CASE
+          WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
+          THEN i.due_date
+        END
+      ) AS last_due,
       CASE
-        WHEN MAX(CASE
-                   WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
-                   THEN i.due_date
-                 END) < CURDATE()
+        WHEN MAX(
+               CASE
+                 WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
+                 THEN i.due_date
+               END
+             ) < CURDATE()
         THEN DATEDIFF(
                CURDATE(),
-               MAX(CASE
-                     WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
-                     THEN i.due_date
-                   END)
+               MAX(
+                 CASE
+                   WHEN (CASE WHEN i.status='paid' THEN 0 ELSE IFNULL(i.amount,0) END - IFNULL(p.paid,0)) > 0
+                   THEN i.due_date
+                 END
+               )
              )
         ELSE 0
       END AS overdue_days,
@@ -76,13 +88,17 @@ async function recalcTenantDebt(conn, tenantId) {
       GROUP BY invoice_id
     ) p ON p.invoice_id = i.id
     WHERE i.tenant_id = ?
-    GROUP BY i.tenant_id
-  `, [tenantId]);
+    GROUP BY i.tenant_id`,
+    [tenantId]
+  );
 }
 
-/* ======================== EXISTING ENDPOINTS (เดิม) ======================== */
+/* ======================== ENDPOINTS ======================== */
 
-// GET /api/payments/my-invoices?limit=3  (ต้องมี token)
+/**
+ * GET /api/payments/my-invoices?limit=3  (ต้องมี token)
+ * ➜ เพิ่ม invoice_no ให้ frontend ใช้เลือก Dxxxx ได้
+ */
 async function getMyLastInvoices(req, res) {
   try {
     const limit = Math.max(1, Math.min(12, Number(req.query.limit) || 3));
@@ -95,8 +111,10 @@ async function getMyLastInvoices(req, res) {
     }
 
     const [rows] = await db.query(
-      `SELECT
+      `
+      SELECT
          id           AS invoice_id,
+         invoice_no,                          -- ⬅ เพิ่ม
          tenant_id,
          room_id,
          period_ym,
@@ -125,20 +143,23 @@ async function getMyLastInvoices(req, res) {
   }
 }
 
-// GET /api/payments/qr  (สาธารณะ)
+/**
+ * GET /api/payments/qr  (สาธารณะ)
+ */
 async function getActiveQR(_req, res) {
   try {
     const [[row]] = await db.query(
-      `SELECT id, title, qr_path, created_at
-         FROM payment_qr
-        WHERE is_active = 1
-        ORDER BY id DESC
-        LIMIT 1`
+      `
+      SELECT id, title, qr_path, created_at
+        FROM payment_qr
+       WHERE is_active = 1
+       ORDER BY id DESC
+       LIMIT 1`
     );
     if (!row) return res.json(null);
 
     const norm = String(row.qr_path || '').replace(/^\/+/, '');
-    row.qr_url = `/uploads/${norm}`; // เสิร์ฟจาก /uploads
+    row.qr_url = `/uploads/${norm}`;
     res.json(row);
   } catch (e) {
     console.error('getActiveQR error:', e);
@@ -146,29 +167,42 @@ async function getActiveQR(_req, res) {
   }
 }
 
-// POST /api/payments/submit (multipart/form-data)
-// body: { invoice_id, amount_paid?, transfer_date?, note? } + file 'slip'
-// ====== submitPayment: ล็อกยอดตามบิล ======
+/**
+ * POST /api/payments/submit (multipart/form-data)
+ * body: { invoice_id? OR invoice_no?, transfer_date?, note? } + file 'slip'
+ * ➜ รองรับทั้ง invoice_id และ invoice_no
+ * ➜ ล็อกยอด payments = ยอดบิล, ตั้ง invoices.status='pending'
+ */
 async function submitPayment(req, res) {
   try {
     const userId = req.user?.id ?? req.user?.user_id ?? req.user?.uid;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { invoice_id, /* amount_paid, */ transfer_date, note } = req.body;
-    if (!invoice_id) return res.status(400).json({ error: 'ระบุ invoice_id' });
-    if (!req.file)    return res.status(400).json({ error: "กรุณาแนบไฟล์สลิป (field ต้องชื่อ 'slip')" });
+    const { invoice_id, invoice_no, transfer_date, note } = req.body || {};
+    if (!invoice_id && !invoice_no) {
+      return res.status(400).json({ error: 'ระบุ invoice_id หรือ invoice_no' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "กรุณาแนบไฟล์สลิป (field ต้องชื่อ 'slip')" });
+    }
 
     const tenantId = await getTenantIdByUser(userId);
     if (!tenantId) return res.status(400).json({ error: 'ไม่พบ tenant ของผู้ใช้' });
 
+    // ✅ ตรวจสอบจาก invoice_no ก่อน ถ้าไม่มี fallback เป็น id
     const [[inv]] = await db.query(
-      `SELECT id, tenant_id, amount, status FROM invoices WHERE id = ? LIMIT 1`,
-      [invoice_id]
+      `
+      SELECT id, invoice_no, tenant_id, amount, status
+        FROM invoices
+       WHERE (${invoice_no ? 'invoice_no = ?' : 'id = ?'})
+       LIMIT 1
+      `,
+      [invoice_no || invoice_id]
     );
+
     if (!inv || inv.tenant_id !== tenantId) {
-      return res.status(400).json({ error: 'บิลไม่ถูกต้อง' });
+      return res.status(400).json({ error: 'บิลไม่ถูกต้องหรือไม่พบในระบบ' });
     }
-    // ไม่ให้ส่งซ้ำบิลที่จ่ายแล้ว
     if (inv.status === 'paid') {
       return res.status(400).json({ error: 'บิลนี้ชำระเสร็จแล้ว' });
     }
@@ -176,29 +210,36 @@ async function submitPayment(req, res) {
     const filename = req.file.filename || path.basename(req.file.path);
     const slip_url = `/uploads/slips/${filename}`;
 
-    // ✅ ยอดที่บันทึกไปที่ payments = ยอดของบิล (ล็อกไว้)
     const payment_id =
-      'PM' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 12) + String(Math.floor(Math.random()*90+10));
+      'PM' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 12) +
+      String(Math.floor(Math.random() * 90 + 10));
 
     await db.query(
-      `INSERT INTO payments
-         (payment_id, invoice_id, amount, payment_date, slip_url, verified_by, status)
-       VALUES (?,?,?,?,?, NULL, 'pending')`,
-      [payment_id, invoice_id, inv.amount, transfer_date ?? null, slip_url]
+      `
+      INSERT INTO payments
+         (payment_id, invoice_id, amount, payment_date, slip_url, verified_by, status, note)
+      VALUES (?,?,?,?,?, NULL, 'pending', ?)
+      `,
+      [payment_id, inv.id, inv.amount, transfer_date ?? null, slip_url, note ?? null]
     );
 
     await db.query(
-      `UPDATE invoices
-          SET status='pending', slip_url=?, paid_at=NULL
-        WHERE id=? AND tenant_id=?`,
-      [slip_url, invoice_id, tenantId]
+      `
+      UPDATE invoices
+         SET status = 'pending',
+             slip_url = ?,
+             paid_at = NULL,
+             updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?
+      `,
+      [slip_url, inv.id, tenantId]
     );
 
     return res.status(201).json({
       message: 'ส่งคำขอชำระเงินแล้ว รอแอดมินตรวจสอบ',
       slip_url,
       status: 'pending',
-      payment_id
+      payment_id,
     });
   } catch (e) {
     console.error('submitPayment error:', e);
@@ -206,94 +247,129 @@ async function submitPayment(req, res) {
   }
 }
 
-// ====== approvePayment: ตรวจยอดต้องตรงก่อนอนุมัติ ======
+
+/**
+ * PATCH /api/admin/payments/:id/approve
+ */
 async function approvePayment(req, res) {
-  const { payment_id, approved_by } = req.body;
-  if (!payment_id) return res.status(400).json({ success:false, message:'payment_id is required' });
+  const paymentId = req.params.id;
+  const conn = typeof db.getConnection === 'function' ? await db.getConnection() : db;
 
-  const conn = await db.getConnection();
   try {
-    await conn.beginTransaction();
+    if (conn.beginTransaction) await conn.beginTransaction();
 
     const [[pay]] = await conn.query(
-      `SELECT p.payment_id, p.status, p.invoice_id, p.amount AS paid_amount,
-              i.tenant_id, i.amount AS invoice_amount
+      `SELECT p.id, p.invoice_id, p.amount, p.status
          FROM payments p
-         JOIN invoices i ON i.id = p.invoice_id
-        WHERE p.payment_id = ? FOR UPDATE`,
-      [payment_id]
+        WHERE p.id = ? FOR UPDATE`,
+      [paymentId]
     );
-    if (!pay) throw new Error('Payment not found');
-
-    // ❗ ยอดต้องเท่ากันเท่านั้น
-    if (Number(pay.paid_amount) !== Number(pay.invoice_amount)) {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: `ยอดสลิป (${pay.paid_amount}) ไม่ตรงกับยอดบิล (${pay.invoice_amount})`
-      });
+    if (!pay) {
+      if (conn.rollback) await conn.rollback();
+      return res.status(404).json({ error: 'payment not found' });
+    }
+    if (pay.status === 'approved') {
+      if (conn.rollback) await conn.rollback();
+      return res.json({ ok: true });
     }
 
-    if (pay.status !== 'approved') {
-      await conn.query(
-        `UPDATE payments
-            SET status='approved',
-                payment_date = COALESCE(payment_date, CURDATE()),
-                verified_by = ?
-          WHERE payment_id = ?`,
-        [approved_by ?? null, payment_id]
-      );
-    }
-
-    await recalcTenantDebt(conn, pay.tenant_id);
-    await conn.commit();
-    res.json({ success:true });
-  } catch (e) {
-    await conn.rollback();
-    console.error('approvePayment error:', e);
-    res.status(500).json({ success:false, message:e.message || 'Server error' });
-  } finally {
-    conn.release();
-  }
-}
-
-// ====== (ใหม่) rejectPayment: ปฏิเสธแล้วให้ยังนับเป็นหนี้ ======
-async function rejectPayment(req, res) {
-  const { payment_id, reason } = req.body;
-  if (!payment_id) return res.status(400).json({ success:false, message:'payment_id is required' });
-
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const [[pay]] = await conn.query(
-      `SELECT p.payment_id, p.status, p.invoice_id, i.tenant_id
-         FROM payments p
-         JOIN invoices i ON i.id = p.invoice_id
-        WHERE p.payment_id = ? FOR UPDATE`,
-      [payment_id]
-    );
-    if (!pay) throw new Error('Payment not found');
-
     await conn.query(
-      `UPDATE payments SET status='rejected' WHERE payment_id=?`,
-      [payment_id]
+      `UPDATE payments
+          SET status='approved',
+              payment_date = COALESCE(payment_date, CURDATE())
+        WHERE id=? AND status='pending'`,
+      [paymentId]
     );
-    // อัปเดตสถานะบิลกลับให้ไม่นับเป็น paid
-    await conn.query(
-      `UPDATE invoices SET status='unpaid' WHERE id=?`,
+
+    const [[bal]] = await conn.query(
+      `SELECT remaining, due_date FROM v_invoice_balance WHERE invoice_id=?`,
       [pay.invoice_id]
     );
 
-    await recalcTenantDebt(conn, pay.tenant_id);
-    await conn.commit();
-    res.json({ success:true });
+    if (bal && Number(bal.remaining) === 0) {
+      await conn.query(
+        `UPDATE invoices SET status='paid', paid_at=NOW(), updated_at=NOW() WHERE id=?`,
+        [pay.invoice_id]
+      );
+    } else {
+      await conn.query(
+        `UPDATE invoices
+           SET status = CASE WHEN CURDATE() > due_date THEN 'overdue' ELSE 'unpaid' END,
+               paid_at = NULL,
+               updated_at = NOW()
+         WHERE id=?`,
+        [pay.invoice_id]
+      );
+    }
+
+    const [[invTenant]] = await conn.query(`SELECT tenant_id FROM invoices WHERE id=?`, [pay.invoice_id]);
+    if (invTenant?.tenant_id) {
+      await recalcTenantDebt(conn, invTenant.tenant_id);
+    }
+
+    if (conn.commit) await conn.commit();
+    return res.json({ ok: true });
   } catch (e) {
-    await conn.rollback();
-    console.error('rejectPayment error:', e);
-    res.status(500).json({ success:false, message:e.message || 'Server error' });
+    if (conn.rollback) await conn.rollback();
+    console.error('approvePayment error:', e);
+    return res.status(400).json({ error: e.message || 'Server error' });
   } finally {
-    conn.release();
+    if (conn.release) conn.release();
+  }
+}
+
+/**
+ * PATCH /api/admin/payments/:id/reject
+ */
+async function rejectPayment(req, res) {
+  const paymentId = req.params.id;
+  const conn = typeof db.getConnection === 'function' ? await db.getConnection() : db;
+
+  try {
+    if (conn.beginTransaction) await conn.beginTransaction();
+
+    const [[pay]] = await conn.query(
+      `SELECT p.id, p.invoice_id, p.status
+         FROM payments p
+        WHERE p.id = ? FOR UPDATE`,
+      [paymentId]
+    );
+    if (!pay) {
+      if (conn.rollback) await conn.rollback();
+      return res.status(404).json({ error: 'payment not found' });
+    }
+    if (pay.status === 'rejected') {
+      if (conn.rollback) await conn.rollback();
+      return res.json({ ok: true });
+    }
+
+    await conn.query(
+      `UPDATE payments SET status='rejected' WHERE id=? AND status='pending'`,
+      [paymentId]
+    );
+
+    await conn.query(
+      `UPDATE invoices
+         SET status = CASE WHEN CURDATE() > due_date THEN 'overdue' ELSE 'unpaid' END,
+             paid_at = NULL,
+             updated_at = NOW()
+       WHERE id=?`,
+      [pay.invoice_id]
+    );
+
+    const [[invTenant]] = await conn.query(`SELECT tenant_id FROM invoices WHERE id=?`, [pay.invoice_id]);
+    if (invTenant?.tenant_id) {
+      await recalcTenantDebt(conn, invTenant.tenant_id);
+    }
+
+    if (conn.commit) await conn.commit();
+    return res.json({ ok: true });
+  } catch (e) {
+    if (conn.rollback) await conn.rollback();
+    console.error('rejectPayment error:', e);
+    return res.status(400).json({ error: e.message || 'Server error' });
+  } finally {
+    if (conn.release) conn.release();
   }
 }
 
@@ -302,6 +378,5 @@ module.exports = {
   getActiveQR,
   submitPayment,
   approvePayment,
-  rejectPayment, // ⬅ เพิ่มออก route ด้วย
+  rejectPayment,
 };
-

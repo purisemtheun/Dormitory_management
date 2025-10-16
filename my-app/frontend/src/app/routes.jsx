@@ -16,9 +16,8 @@ import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
 import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";  // ฟอร์มออกบิล
 import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";            // ตารางรีวิว/อนุมัติการจ่าย
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
-
-// ✅ เพิ่มหน้า “ค้นหาหนี้”
-import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
+import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";            // ค้นหาหนี้ (มีอยู่แล้ว)
+import AdminDashboardPage from "../pages/admin/DashboardPage";              // ✅ เพิ่ม Dashboard
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
@@ -36,9 +35,7 @@ const RequireAuth = ({ children }) =>
 
 const RequireAdmin = ({ children }) => {
   const role = getRole();
-  return role === "admin" || role === "staff"
-    ? children
-    : <Navigate to="/login" replace />;
+  return role === "admin" || role === "staff" ? children : <Navigate to="/login" replace />;
 };
 
 const RequireTechnician = ({ children }) =>
@@ -75,7 +72,13 @@ const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/admin/rooms" replace /> },
+      // ✅ ให้หน้าแรกของแอดมินไป Dashboard
+      { index: true, element: <Navigate to="/admin/dashboard" replace /> },
+
+      // ✅ Dashboard
+      { path: "dashboard", element: <AdminDashboardPage /> },
+
+      // จัดการห้อง/ผู้เช่า
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
 
@@ -86,7 +89,7 @@ const router = createBrowserRouter([
       // จัดการงานซ่อม
       { path: "repairs", element: <AdminRepairManagement /> },
 
-      // ✅ หน้า “ค้นหาหนี้” ของแอดมิน
+      // ค้นหาหนี้
       { path: "debts", element: <AdminDebtSearchPage /> },
     ],
   },

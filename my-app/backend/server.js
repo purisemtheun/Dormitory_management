@@ -58,6 +58,9 @@ app.use('/api/repairs',  repairRoutes);
 app.use('/api/rooms',    roomRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
+
 
 // ให้หน้า frontend เก่าที่เรียก /api/invoices ยังใช้ได้
 app.get('/api/invoices', requireAuth, (req, res, next) =>

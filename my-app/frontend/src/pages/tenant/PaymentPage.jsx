@@ -13,6 +13,9 @@ export default function PaymentPage() {
   const [serverSlipUrl, setServerSlipUrl] = useState("");
   const [uploading, setUploading] = useState(false);
 
+  // ✅ เพิ่ม state สำหรับเลขใบแจ้งหนี้ที่เลือก
+  const [selectedInvoiceNo, setSelectedInvoiceNo] = useState("");
+
   // ===== helper =====
   function normalizeResponse(resp) {
     if (!resp) return null;
@@ -25,11 +28,8 @@ export default function PaymentPage() {
     try {
       setLoadingInv(true);
       setErr("");
-      // ✅ ดึงบิล 3 เดือนล่าสุดจาก backend
       const resp = await http.get("/api/payments/my-invoices?limit=3");
       const payload = normalizeResponse(resp);
-
-      // ตรวจรูปแบบ payload
       const list = Array.isArray(payload)
         ? payload
         : Array.isArray(payload?.data)
@@ -37,6 +37,14 @@ export default function PaymentPage() {
         : [];
 
       setInvoices(list);
+      // ถ้าไม่มีค่าเลือกไว้ ให้ default เป็นใบแรกที่ยังค้างและมี invoice_no
+      const firstNo =
+        list.find(
+          (r) =>
+            (r.effective_status ?? r.status) !== "paid" && r.invoice_no?.length
+        )?.invoice_no || "";
+      setSelectedInvoiceNo((prev) => prev || firstNo);
+
       console.log("🧾 โหลดใบแจ้งหนี้สำเร็จ:", list);
     } catch (e) {
       const msg =
@@ -61,14 +69,14 @@ export default function PaymentPage() {
     return x !== "paid";
   };
 
-  // ===== แสดงใบแจ้งหนี้ 3 เดือนล่าสุด =====
+  // ===== แสดงใบแจ้งหนี้ 3 เดือนล่าสุด (เฉพาะที่ยังค้าง) =====
   const latest3 = useMemo(() => {
-    const list = [...invoices].filter((r) =>
-      isDebt(r.effective_status ?? r.status)
-    );
+    const list = [...invoices].filter((r) => isDebt(r.effective_status ?? r.status));
     list.sort((a, b) => {
-      const aa = a.period_ym || (a.due_date ? String(a.due_date).slice(0, 10) : "");
-      const bb = b.period_ym || (b.due_date ? String(b.due_date).slice(0, 10) : "");
+      const aa =
+        a.period_ym || (a.due_date ? String(a.due_date).slice(0, 10) : "");
+      const bb =
+        b.period_ym || (b.due_date ? String(b.due_date).slice(0, 10) : "");
       return aa < bb ? 1 : aa > bb ? -1 : 0;
     });
     return list.slice(0, 3);
@@ -79,11 +87,19 @@ export default function PaymentPage() {
     [latest3]
   );
 
+  // ✅ หา targetInvoice จากเลขที่ผู้ใช้เลือก (ถ้าเลือก), ไม่งั้น fallback เป็นอันแรกของ latest3
   const targetInvoice = useMemo(() => {
+    if (selectedInvoiceNo) {
+      return (
+        invoices.find((r) => r.invoice_no === selectedInvoiceNo) ||
+        latest3[0] ||
+        null
+      );
+    }
     if (latest3.length) return latest3[0];
     if (!invoices.length) return null;
     return invoices[0];
-  }, [latest3, invoices]);
+  }, [selectedInvoiceNo, latest3, invoices]);
 
   // ===== อัปโหลดสลิป =====
   const onFileChange = (e) => {
@@ -118,16 +134,17 @@ export default function PaymentPage() {
     try {
       setUploading(true);
       setErr("");
-      const res = await paymentApi.submit({
-        invoice_id: targetInvoice.invoice_id,
-        slip: file,
-      });
 
-      const payload = res?.data ?? res;
-      const slipUrl = payload?.slip_url ?? payload?.data?.slip_url ?? payload;
+      // ✅ ถ้ามีเลขบิล ให้ส่ง invoice_no ไป backend (ต้องมีการรองรับใน paymentController)
+      const payload = selectedInvoiceNo?.length
+        ? { invoice_no: selectedInvoiceNo, slip: file }
+        : { invoice_id: targetInvoice.invoice_id, slip: file };
+
+      const res = await paymentApi.submit(payload);
+      const data = res?.data ?? res;
+      const slipUrl = data?.slip_url ?? data?.data?.slip_url ?? data;
 
       if (typeof slipUrl === "string") setServerSlipUrl(slipUrl);
-
       await loadInvoices();
     } catch (e2) {
       const api = e2?.response?.data || {};
@@ -203,6 +220,7 @@ export default function PaymentPage() {
               <table className="pay-table">
                 <thead>
                   <tr>
+                    <th>เลขบิล</th>
                     <th>งวด</th>
                     <th style={{ textAlign: "right" }}>จำนวนเงิน (บาท)</th>
                     <th>ครบกำหนด</th>
@@ -216,6 +234,7 @@ export default function PaymentPage() {
                       key={r.invoice_id}
                       style={idx === 0 ? { background: "#f3f4f6" } : {}}
                     >
+                      <td>{r.invoice_no || "-"}</td>
                       <td>{r.period_ym || "-"}</td>
                       <td style={{ textAlign: "right" }}>
                         {Number(r.amount || 0).toLocaleString()}
@@ -259,6 +278,29 @@ export default function PaymentPage() {
             <h2 className="pay-title">สแกนจ่ายค่าเช่าและแนบสลิป</h2>
             <img src={qrSrc} alt="QR สำหรับชำระค่าเช่า" className="pay-qr" />
 
+            {/* ✅ ช่องเลือกเลขบิล */}
+            <div className="pay-field">
+              <label className="label">
+                เลือกเลขใบแจ้งหนี้ (ถ้ามีหลายใบค้าง)
+              </label>
+              <select
+                className="input"
+                value={selectedInvoiceNo}
+                onChange={(e) => setSelectedInvoiceNo(e.target.value)}
+              >
+                <option value="">— เลือกอัตโนมัติ (งวดล่าสุด) —</option>
+                {latest3.map((r) => (
+                  <option key={r.invoice_id} value={r.invoice_no || ""}>
+                    {r.invoice_no || "(ไม่มีเลข)"} • {r.period_ym} •{" "}
+                    {Number(r.amount || 0).toLocaleString()} บาท
+                  </option>
+                ))}
+              </select>
+              <p className="help">
+                ถ้าไม่เลือก ระบบจะจับคู่กับงวดล่าสุดที่ยังค้างโดยอัตโนมัติ
+              </p>
+            </div>
+
             <form onSubmit={onSubmit}>
               <div className="pay-field">
                 <label className="label">
@@ -270,7 +312,7 @@ export default function PaymentPage() {
                   accept=".jpg,.jpeg,.png,.pdf"
                   onChange={onFileChange}
                 />
-                <p className="help">ระบบจะผูกสลิปให้บิลงวดล่าสุดที่ยังค้าง</p>
+                <p className="help">ระบบจะผูกสลิปกับเลขบิลที่เลือก</p>
               </div>
 
               {preview && (

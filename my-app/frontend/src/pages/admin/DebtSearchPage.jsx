@@ -1,10 +1,12 @@
+// frontend/src/pages/admin/DebtSearchPage.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { fetchDebtSummary, searchDebts } from '../../services/debtService';
 
 const defaultFilters = {
   query: '',
   room: '',
-  status: 'unpaid',
+  // ให้ค่าเริ่มต้นเป็น "ทั้งหมด" เพื่อให้ตรงกับฝั่ง tenant ที่อิง remaining
+  status: '',
   minOverdue: 0,
   page: 1,
   limit: 20,
@@ -32,12 +34,15 @@ export default function DebtSearchPage() {
     setError('');
     try {
       const { data } = await searchDebts(params);
-      setRows(data?.data || []);
-      setMeta({
-        page: data?.page || 1,
-        limit: data?.limit || params.limit,
-        total: data?.total || 0,
-      });
+
+      // รองรับทั้งแบบ array ล้วน และแบบ { data, page, limit, total }
+      const list  = Array.isArray(data) ? data : (data?.data || []);
+      const page  = Array.isArray(data) ? 1 : (data?.page ?? 1);
+      const limit = Array.isArray(data) ? params.limit : (data?.limit ?? params.limit);
+      const total = Array.isArray(data) ? list.length : (data?.total ?? list.length);
+
+      setRows(list);
+      setMeta({ page, limit, total });
       setFilters(params);
     } catch (e) {
       setError(e?.response?.data?.message || e.message || 'โหลดข้อมูลไม่สำเร็จ');
@@ -87,12 +92,28 @@ export default function DebtSearchPage() {
       </div>
 
       {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginBottom: 12 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))',
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
         <SummaryCard title="ผู้เช่าทั้งหมด" value={summary?.tenants_total ?? '-'} />
         <SummaryCard title="มียอดค้าง" value={summary?.tenants_debtors ?? '-'} />
-        <SummaryCard title="ยอดค้างรวม" value={summary ? fmtMoney(summary.outstanding_total) : '-'} />
-        <SummaryCard title="ยอดเกินกำหนด" value={summary ? fmtMoney(summary.overdue_total) : '-'} />
-        <SummaryCard title="เกินกำหนดสูงสุด (วัน)" value={summary?.max_overdue_days ?? '-'} />
+        <SummaryCard
+          title="ยอดค้างรวม"
+          value={summary ? fmtMoney(Number(summary.outstanding_total ?? 0)) : '-'}
+        />
+        <SummaryCard
+          title="ยอดเกินกำหนด"
+          value={summary ? fmtMoney(Number(summary.overdue_total ?? 0)) : '-'}
+        />
+        <SummaryCard
+          title="เกินกำหนดสูงสุด (วัน)"
+          value={summary?.max_overdue_days ?? '-'}
+        />
       </div>
 
       {/* Filters panel */}
@@ -107,6 +128,7 @@ export default function DebtSearchPage() {
                 onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
               />
             </Field>
+
             <Field label="เลขห้อง">
               <input
                 className="input"
@@ -115,6 +137,7 @@ export default function DebtSearchPage() {
                 onChange={(e) => setFilters((f) => ({ ...f, room: e.target.value }))}
               />
             </Field>
+
             <Field label="สถานะ">
               <select
                 className="input"
@@ -127,6 +150,7 @@ export default function DebtSearchPage() {
                 <option value="cleared">เคลียร์แล้ว</option>
               </select>
             </Field>
+
             <Field label="เกินกำหนดขั้นต่ำ (วัน)">
               <input
                 className="input"
@@ -135,10 +159,14 @@ export default function DebtSearchPage() {
                 placeholder="0"
                 value={filters.minOverdue}
                 onChange={(e) =>
-                  setFilters((f) => ({ ...f, minOverdue: e.target.value ? Number(e.target.value) : 0 }))
+                  setFilters((f) => ({
+                    ...f,
+                    minOverdue: e.target.value ? Number(e.target.value) : 0,
+                  }))
                 }
               />
             </Field>
+
             <Field label="เรียงตาม">
               <select
                 className="input"
@@ -152,6 +180,7 @@ export default function DebtSearchPage() {
                 <option value="room_no:asc">เลขห้อง</option>
               </select>
             </Field>
+
             <div style={{ display: 'flex', gap: 8, alignSelf: 'end' }}>
               <button className="btn btn-primary" type="submit" disabled={loading}>
                 {loading ? 'กำลังค้นหา…' : 'ค้นหา'}
@@ -162,8 +191,16 @@ export default function DebtSearchPage() {
             </div>
           </div>
         </form>
+
         {error && (
-          <div style={{ marginTop: 10, padding: 12, borderLeft: '4px solid var(--red-500)', background: '#fff1f2' }}>
+          <div
+            style={{
+              marginTop: 10,
+              padding: 12,
+              borderLeft: '4px solid var(--red-500)',
+              background: '#fff1f2',
+            }}
+          >
             {error}
           </div>
         )}
@@ -193,14 +230,14 @@ export default function DebtSearchPage() {
                 </tr>
               )}
 
-              {rows.map((r) => (
-                <tr key={r.tenant_id}>
+              {rows.map((r, idx) => (
+                <tr key={r.tenant_id ?? idx}>
                   <td>{r.tenant_name}</td>
                   <td>{r.phone || '-'}</td>
                   <td>{r.room_no}</td>
-                  <td style={{ textAlign: 'right' }}>{fmtMoney(r.outstanding)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmtMoney(Number(r.outstanding ?? 0))}</td>
                   <td>{fmtDate(r.last_due)}</td>
-                  <td style={{ textAlign: 'center' }}>{r.overdue_days ?? 0}</td>
+                  <td style={{ textAlign: 'center' }}>{Number(r.overdue_days ?? 0)}</td>
                   <td>
                     <a className="ad-sublink" href={`/admin/tenants/${r.tenant_id}`}>
                       ดูรายละเอียด
@@ -218,11 +255,7 @@ export default function DebtSearchPage() {
             ทั้งหมด {meta.total} รายการ | หน้า {meta.page} / {totalPages}
           </div>
 
-          <button
-            className="btn"
-            disabled={meta.page <= 1 || loading}
-            onClick={() => gotoPage(meta.page - 1)}
-          >
+          <button className="btn" disabled={meta.page <= 1 || loading} onClick={() => gotoPage(meta.page - 1)}>
             ก่อนหน้า
           </button>
 
@@ -240,11 +273,7 @@ export default function DebtSearchPage() {
             ))}
           </select>
 
-          <button
-            className="btn"
-            disabled={meta.page >= totalPages || loading}
-            onClick={() => gotoPage(meta.page + 1)}
-          >
+          <button className="btn" disabled={meta.page >= totalPages || loading} onClick={() => gotoPage(meta.page + 1)}>
             ถัดไป
           </button>
 
@@ -267,7 +296,7 @@ export default function DebtSearchPage() {
   );
 }
 
-/* ===== Small UI helpers (เข้ากับธีม) ===== */
+/* ===== Small UI helpers ===== */
 function SummaryCard({ title, value }) {
   return (
     <div className="ad-panel" style={{ padding: 12 }}>
