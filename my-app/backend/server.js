@@ -10,15 +10,15 @@ const app = express();
 /* =========================
  * Route modules
  * ========================= */
-const authRoutes     = require('./routes/authRoutes');
-const repairRoutes   = require('./routes/repairRoutes');
-const roomRoutes     = require('./routes/roomRoutes');
-const adminRoutes    = require('./routes/adminRoutes');
-const paymentRoutes  = require('./routes/paymentRoutes');
-const debtRoutes     = require('./routes/debtRoutes.js');
-const adminProofs    = require('./routes/admin.paymentProofs');
-const adminLineRoutes= require('./routes/admin.line');
-const lineWebhook    = require('./routes/lineWebhook');
+const authRoutes       = require('./routes/authRoutes');
+const repairRoutes     = require('./routes/repairRoutes');
+const roomRoutes       = require('./routes/roomRoutes');
+const adminRoutes      = require('./routes/adminRoutes');
+const paymentRoutes    = require('./routes/paymentRoutes');
+const debtRoutes       = require('./routes/debtRoutes.js');
+const adminProofs      = require('./routes/admin.paymentProofs');
+const adminLineRoutes  = require('./routes/admin.line');
+const lineWebhook      = require('./routes/lineWebhook');
 
 /* =========================
  * Middlewares / Controllers
@@ -31,15 +31,22 @@ const repairController = require('./controllers/repairController');
 /* =========================
  * Global middlewares (base)
  * ========================= */
-app.use(cors({ origin: true, credentials: true }));
+app.disable('x-powered-by');
+const corsOrigin = process.env.CORS_ORIGIN || true;
+app.use(cors({ origin: corsOrigin, credentials: true }));
 
-/* =========================
- * LINE Webhook BEFORE body parsers
- * ========================= */
+/* =====================================================
+ * LINE Webhook — ต้องมาก่อน body parsers เสมอ
+ * ===================================================== */
+const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
+
+// รับ raw body เฉพาะเส้นทาง Webhook (จำเป็นต่อการตรวจลายเซ็น)
+app.use(LINE_WEBHOOK_PATH, express.raw({ type: 'application/json' }));
+// mount router ของ LINE หลัง raw body
 app.use(lineWebhook);
 
 /* =========================
- * Body parsers
+ * Body parsers (สำหรับ API อื่น)
  * ========================= */
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -59,7 +66,7 @@ app.use(
 app.use('/api/auth',     authRoutes);
 app.use('/api/repairs',  repairRoutes);
 app.use('/api/rooms',    roomRoutes);
-app.use('/api/admin',    adminRoutes);         // ← ห้ามซ้ำ
+app.use('/api/admin',    adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api', require('./routes/notifications'));
@@ -67,39 +74,29 @@ app.use('/api', require('./routes/notifications'));
 // เส้นทางย่อยของแอดมิน (payment proofs)
 app.use('/api/admin', adminProofs);
 
-// Admin LINE (ตั้งค่าทดสอบ)
+// Admin LINE (ตั้งค่า/ทดสอบ)
 app.use('/api', adminLineRoutes);
 
-/* =========================
- * Aliases / legacy
- * ========================= */
+// Aliases / legacy
 app.get('/api/invoices', requireAuth, (req, res, next) =>
   paymentCtrl.getMyLastInvoices(req, res, next)
 );
 
 // Technician helper routes
-app.get(
-  '/api/technicians',
-  verifyToken,
-  authorizeRoles('admin', 'staff'),
+app.get('/api/technicians',
+  verifyToken, authorizeRoles('admin', 'staff'),
   repairController.listTechnicians
 );
-app.get(
-  '/api/tech/repairs',
-  verifyToken,
-  authorizeRoles('technician'),
+app.get('/api/tech/repairs',
+  verifyToken, authorizeRoles('technician'),
   repairController.getAllRepairs
 );
-app.patch(
-  '/api/tech/repairs/:id/status',
-  verifyToken,
-  authorizeRoles('technician'),
+app.patch('/api/tech/repairs/:id/status',
+  verifyToken, authorizeRoles('technician'),
   repairController.techSetStatus
 );
-app.get(
-  '/api/tech/repairs/:id',
-  verifyToken,
-  authorizeRoles('technician'),
+app.get('/api/tech/repairs/:id',
+  verifyToken, authorizeRoles('technician'),
   repairController.getRepairById
 );
 

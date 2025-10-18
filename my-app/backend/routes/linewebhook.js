@@ -1,110 +1,129 @@
-// backend/routes/lineWebhook.js
+// routes/lineWebhook.js
 const express = require('express');
-const router = express.Router();
+const crypto = require('crypto');
 const db = require('../config/db');
-const { verifySignature, replyMessage } = require('../services/lineService');
 
+const router = express.Router();
 const WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
 
-// ใช้ body parser ที่เก็บ raw body ไว้ตรวจลายเซ็น
-router.post(
-  WEBHOOK_PATH,
-  express.json({
-    verify: (req, _res, buf) => { req.rawBody = buf; },
-  }),
-  async (req, res) => {
-    try {
-      // 1) ตรวจลายเซ็น ก่อนทำงานใด ๆ
-      const ok = await verifySignature(req.rawBody, req.headers['x-line-signature']);
-      if (!ok) return res.status(401).end();
+// helper: ส่งข้อความกลับ
+async function replyText(replyToken, text) {
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: 'text', text }],
+    }),
+  });
+}
 
-      const events = Array.isArray(req.body?.events) ? req.body.events : [];
+router.post(WEBHOOK_PATH, async (req, res) => {
+  try {
+    if (!process.env.CHANNEL_SECRET || !process.env.CHANNEL_ACCESS_TOKEN) {
+      console.error('LINE webhook misconfigured: CHANNEL_SECRET/CHANNEL_ACCESS_TOKEN is missing');
+      return res.status(200).end();
+    }
 
-      // 2) วนลูปทุกอีเวนต์
-      for (const ev of events) {
-        // รองรับ follow เพื่อทักทายตอนแอดบอท
-        if (ev.type === 'follow') {
-          await replyMessage(ev.replyToken, {
-            type: 'text',
-            text: 'สวัสดีครับ 👋\nหากต้องการเชื่อมบัญชี กรุณาพิมพ์: ผูก <โค้ด> หรือ LINK:<โค้ด>',
-          });
-          continue;
-        }
+    // เตรียม raw body สำหรับตรวจลายเซ็น
+    const bodyStr = Buffer.isBuffer(req.body)
+      ? req.body.toString()
+      : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
 
-        if (ev.type !== 'message' || ev.message?.type !== 'text') {
-          // ไม่ใช่ข้อความ → ข้ามไป
-          continue;
-        }
+    const signature = req.get('x-line-signature') || '';
+    const expected = crypto.createHmac('sha256', process.env.CHANNEL_SECRET)
+      .update(bodyStr)
+      .digest('base64');
 
-        const text = String(ev.message.text || '').trim();
-        const replyToken = ev.replyToken;
-        const lineUserId = ev.source?.userId;
+    if (signature !== expected) return res.status(401).end();
 
-        // 3) แยก 2 รูปแบบคำสั่ง: "ผูก <code>" หรือ "LINK:<code>"
-        let code = null;
+    const payload = JSON.parse(bodyStr || '{}');
+    const events = Array.isArray(payload.events) ? payload.events : [];
 
-        // รูปแบบไทย: ผูก CODE
-        const m1 = text.match(/^ผูก\s+([A-Za-z0-9_-]{4,32})$/i);
-        if (m1) code = m1[1];
+    for (const ev of events) {
+      if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
 
-        // รูปแบบอังกฤษ: LINK:CODE
-        const m2 = text.match(/^LINK:([A-Za-z0-9_-]{4,32})$/i);
-        if (!code && m2) code = m2[1];
+      const text = (ev.message.text || '').trim();
+      const userId = ev.source?.userId;
+      const replyToken = ev.replyToken;
 
-        if (!code) {
-          // ไม่รู้จักคำสั่ง → ตอบข้อความช่วยเหลือ
-          await replyMessage(replyToken, {
-            type: 'text',
-            text: 'พิมพ์: ผูก <โค้ด> หรือ LINK:<โค้ด> เพื่อเชื่อมบัญชีเข้ากับระบบหอพัก',
-          });
-          continue;
-        }
+      // โค้ดได้ทั้ง "LINK ABC123" / "ลิงก์ ABC123" / "ABC123"
+      const match = text.match(/^(?:LINK|ลิงก์)?\s*([A-HJ-NP-Z2-9]{6})$/i);
+      if (match) {
+        const code = match[1].toUpperCase();
 
-        // 4) ตรวจโค้ดจากตาราง pairing_codes (ยังไม่หมดอายุ และยังไม่ใช้)
-        const [[p]] = await db.query(
-          `SELECT code, user_id, tenant_id
-             FROM pairing_codes
+        // ดึงโค้ด — lookup ด้วย code โดยตรง
+        const [rows] = await db.query(
+          `SELECT tenant_id, expires_at, used_at
+             FROM link_tokens
             WHERE code = ?
-              AND (expire_at IS NULL OR expire_at > NOW())
-              AND used_at IS NULL
             LIMIT 1`,
           [code]
         );
+        if (!rows.length) { await replyText(replyToken, '❌ โค้ดไม่ถูกต้องหรือไม่มีอยู่ในระบบ'); continue; }
 
-        if (!p) {
-          await replyMessage(replyToken, { type: 'text', text: 'โค้ดไม่ถูกต้อง หรือหมดอายุแล้ว' });
-          continue;
+        const token = rows[0];
+        if (token.used_at) { await replyText(replyToken, '⚠️ โค้ดนี้ถูกใช้ไปแล้ว'); continue; }
+        if (token.expires_at && new Date(token.expires_at) < new Date()) {
+          await replyText(replyToken, '⏰ โค้ดหมดอายุแล้ว กรุณาขอใหม่'); continue;
         }
 
-        // 5) ผูก line_user_id กับ tenant_id (และ user_id ถ้ามี) — upsert
+        // 🔻 แปลงให้เป็น tenants.tenant_id (เช่น 'T0001') ก่อน เพื่อให้ตรงกับ FK ของ tenant_line_links
+        let tenantKey = token.tenant_id;
+        const [[found]] = await db.query(
+          `SELECT tenant_id 
+             FROM tenants 
+            WHERE id = ? OR tenant_id = ? 
+            LIMIT 1`,
+          [tenantKey, tenantKey]
+        );
+        if (!found) { await replyText(replyToken, '❌ ไม่พบผู้เช่าในระบบ'); continue; }
+        tenantKey = found.tenant_id; // ← ค่านี้ตรงกับ FK
+
+        // บันทึก mapping โดยใช้ tenantKey (เช่น 'T0001')
         await db.query(
-          `INSERT INTO line_links (tenant_id, user_id, line_user_id, linked_at)
-           VALUES (?,?,?,NOW())
-           ON DUPLICATE KEY UPDATE
-             user_id = VALUES(user_id),
-             line_user_id = VALUES(line_user_id),
-             linked_at = NOW()`,
-          [p.tenant_id, p.user_id || null, lineUserId]
+          `INSERT INTO tenant_line_links(tenant_id, line_user_id, linked_at)
+           VALUES (?, ?, NOW())
+           ON DUPLICATE KEY UPDATE tenant_id = VALUES(tenant_id), linked_at = NOW()`,
+          [tenantKey, userId]
         );
 
-        // 6) mark โค้ดว่าใช้แล้ว
-        await db.query(`UPDATE pairing_codes SET used_at = NOW() WHERE code = ?`, [code]);
+        // ปิดโค้ดด้วย code (mark used)
+        await db.query(
+          'UPDATE link_tokens SET used_at = NOW() WHERE code = ? LIMIT 1',
+          [code]
+        );
 
-        // 7) ตอบกลับสำเร็จ
-        await replyMessage(replyToken, {
-          type: 'text',
-          text: 'เชื่อมบัญชีสำเร็จ ✅\nคุณจะได้รับการแจ้งเตือนผ่าน LINE อัตโนมัติ',
-        });
+        // ดึงข้อมูลแสดงผล
+        const [[info]] = await db.query(
+          `SELECT t.tenant_id, r.room_number, COALESCE(u.fullname, u.name) AS fullname
+             FROM tenants t
+             LEFT JOIN rooms r ON r.id = t.room_id
+             LEFT JOIN users u ON u.id = t.user_id
+            WHERE t.tenant_id = ?
+            LIMIT 1`,
+          [tenantKey]
+        );
+
+        await replyText(
+          replyToken,
+          `✅ ผูกบัญชีสำเร็จ\nผู้เช่า: ${info?.fullname || '-'}\nรหัส: ${tenantKey}\nห้อง: ${info?.room_number || '-'}`
+        );
+        continue;
       }
 
-      // LINE ต้องการ 200 ตอบกลับไว ๆ
-      res.json({ ok: true });
-    } catch (e) {
-      console.error('LINE webhook error:', e);
-      // ต้องตอบ 200 แม้จะ fail บาง event (เพื่อไม่ให้ LINE รีไทรซ้ำมาก)
-      res.status(200).json({ ok: false });
+      // ข้อความทั่วไป (ไม่ใช่โค้ด)
+      await replyText(replyToken, `รับแล้ว: ${text}`);
     }
+
+    res.status(200).end();
+  } catch (err) {
+    console.error('LINE webhook error:', err?.stack || err);
+    res.status(200).end();
   }
-);
+});
 
 module.exports = router;
