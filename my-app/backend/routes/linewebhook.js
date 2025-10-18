@@ -1,61 +1,59 @@
-// routes/lineWebhook.js
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../config/db');
+const { verifySignature, replyMessage, refreshSettings } = require('../services/lineService');
 
 const router = express.Router();
-const WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
 
-// helper: ส่งข้อความกลับ
-async function replyText(replyToken, text) {
-  await fetch('https://api.line.me/v2/bot/message/reply', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      replyToken,
-      messages: [{ type: 'text', text }],
-    }),
-  });
+function getRawBodyString(req) {
+  if (Buffer.isBuffer(req.body)) return req.body.toString();
+  if (typeof req.body === 'string') return req.body;
+  return JSON.stringify(req.body || {});
 }
 
-router.post(WEBHOOK_PATH, async (req, res) => {
+router.post('/', async (req, res) => {
+  const t0 = Date.now();
   try {
-    if (!process.env.CHANNEL_SECRET || !process.env.CHANNEL_ACCESS_TOKEN) {
-      console.error('LINE webhook misconfigured: CHANNEL_SECRET/CHANNEL_ACCESS_TOKEN is missing');
-      return res.status(200).end();
+    await refreshSettings().catch(() => {});
+    const raw = getRawBodyString(req);
+
+    // === DEBUG LOG: เห็นทุกครั้งที่ LINE ยิงเข้า ===
+    console.log(`[LINE webhook] hit len=${raw.length} ct=${req.get('content-type')} ua=${req.get('user-agent')}`);
+
+    let sigOK = false;
+    if (process.env.LINE_SKIP_VERIFY === '1') {
+      sigOK = true;
+      console.warn('[LINE webhook] WARNING: LINE_SKIP_VERIFY=1 (signature check is skipped)');
+    } else {
+      sigOK = await verifySignature(raw, req.get('x-line-signature') || '');
+    }
+    if (!sigOK) {
+      console.warn('[LINE webhook] sig=NG (signature mismatch). Check Channel secret!');
+      return res.status(401).end();
     }
 
-    // เตรียม raw body สำหรับตรวจลายเซ็น
-    const bodyStr = Buffer.isBuffer(req.body)
-      ? req.body.toString()
-      : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
-
-    const signature = req.get('x-line-signature') || '';
-    const expected = crypto.createHmac('sha256', process.env.CHANNEL_SECRET)
-      .update(bodyStr)
-      .digest('base64');
-
-    if (signature !== expected) return res.status(401).end();
-
-    const payload = JSON.parse(bodyStr || '{}');
+    const payload = JSON.parse(raw || '{}');
     const events = Array.isArray(payload.events) ? payload.events : [];
 
     for (const ev of events) {
       if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
 
-      const text = (ev.message.text || '').trim();
+      const text = String(ev.message.text || '').trim();
       const userId = ev.source?.userId;
       const replyToken = ev.replyToken;
+      console.log(`[LINE webhook] from=${userId} text="${text}"`);
 
-      // โค้ดได้ทั้ง "LINK ABC123" / "ลิงก์ ABC123" / "ABC123"
-      const match = text.match(/^(?:LINK|ลิงก์)?\s*([A-HJ-NP-Z2-9]{6})$/i);
-      if (match) {
-        const code = match[1].toUpperCase();
+      // ===== quick command: MYID / ไอดี =====
+      if (/^(myid|ไอดี)$/i.test(text)) {
+        await replyMessage(replyToken, `Your LINE userId: ${userId || '-'}`);
+        continue;
+      }
 
-        // ดึงโค้ด — lookup ด้วย code โดยตรง
+      // ===== link code: "LINK 3Q96DG" / "ลิงก์ 3Q96DG" / "3Q96DG" =====
+      const m = text.match(/^(?:LINK|ลิงก์)?\s*([A-HJ-NP-Z2-9]{6})$/i);
+      if (m) {
+        const code = m[1].toUpperCase();
+
+        // 1) หาโค้ด
         const [rows] = await db.query(
           `SELECT tenant_id, expires_at, used_at
              FROM link_tokens
@@ -63,66 +61,62 @@ router.post(WEBHOOK_PATH, async (req, res) => {
             LIMIT 1`,
           [code]
         );
-        if (!rows.length) { await replyText(replyToken, '❌ โค้ดไม่ถูกต้องหรือไม่มีอยู่ในระบบ'); continue; }
+        if (!rows.length) { await replyMessage(replyToken, '❌ โค้ดไม่ถูกต้องหรือไม่มีอยู่ในระบบ'); continue; }
 
         const token = rows[0];
-        if (token.used_at) { await replyText(replyToken, '⚠️ โค้ดนี้ถูกใช้ไปแล้ว'); continue; }
+        if (token.used_at) { await replyMessage(replyToken, '⚠️ โค้ดนี้ถูกใช้ไปแล้ว'); continue; }
         if (token.expires_at && new Date(token.expires_at) < new Date()) {
-          await replyText(replyToken, '⏰ โค้ดหมดอายุแล้ว กรุณาขอใหม่'); continue;
+          await replyMessage(replyToken, '⏰ โค้ดหมดอายุแล้ว กรุณาขอใหม่'); continue;
         }
 
-        // 🔻 แปลงให้เป็น tenants.tenant_id (เช่น 'T0001') ก่อน เพื่อให้ตรงกับ FK ของ tenant_line_links
-        let tenantKey = token.tenant_id;
+        // 2) ยืนยัน tenant
+        const tenantKey = token.tenant_id;
         const [[found]] = await db.query(
-          `SELECT tenant_id 
-             FROM tenants 
-            WHERE id = ? OR tenant_id = ? 
+          `SELECT tenant_id, user_id, room_id
+             FROM tenants
+            WHERE tenant_id = ?
             LIMIT 1`,
-          [tenantKey, tenantKey]
+          [tenantKey]
         );
-        if (!found) { await replyText(replyToken, '❌ ไม่พบผู้เช่าในระบบ'); continue; }
-        tenantKey = found.tenant_id; // ← ค่านี้ตรงกับ FK
+        if (!found) { await replyMessage(replyToken, '❌ ไม่พบผู้เช่าในระบบ'); continue; }
 
-        // บันทึก mapping โดยใช้ tenantKey (เช่น 'T0001')
+        // 3) บันทึก mapping (1:1)
         await db.query(
-          `INSERT INTO tenant_line_links(tenant_id, line_user_id, linked_at)
+          `INSERT INTO tenant_line_links (line_user_id, tenant_id, linked_at)
            VALUES (?, ?, NOW())
            ON DUPLICATE KEY UPDATE tenant_id = VALUES(tenant_id), linked_at = NOW()`,
-          [tenantKey, userId]
+          [userId, tenantKey]
         );
 
-        // ปิดโค้ดด้วย code (mark used)
-        await db.query(
-          'UPDATE link_tokens SET used_at = NOW() WHERE code = ? LIMIT 1',
-          [code]
-        );
+        // 4) ปิดโค้ด
+        await db.query('UPDATE link_tokens SET used_at = NOW() WHERE code = ? LIMIT 1', [code]);
 
-        // ดึงข้อมูลแสดงผล
+        // 5) ตอบกลับ
         const [[info]] = await db.query(
-          `SELECT t.tenant_id, r.room_number, COALESCE(u.fullname, u.name) AS fullname
+          `SELECT t.tenant_id, COALESCE(u.fullname, u.name) AS fullname, t.room_id AS room_label
              FROM tenants t
-             LEFT JOIN rooms r ON r.id = t.room_id
-             LEFT JOIN users u ON u.id = t.user_id
+        LEFT JOIN users u ON u.id = t.user_id
             WHERE t.tenant_id = ?
             LIMIT 1`,
           [tenantKey]
         );
 
-        await replyText(
+        await replyMessage(
           replyToken,
-          `✅ ผูกบัญชีสำเร็จ\nผู้เช่า: ${info?.fullname || '-'}\nรหัส: ${tenantKey}\nห้อง: ${info?.room_number || '-'}`
+          `✅ ผูกบัญชีสำเร็จ\nผู้เช่า: ${info?.fullname || '-'}\nรหัส: ${tenantKey}\nห้อง: ${info?.room_label || '-'}`
         );
         continue;
       }
 
-      // ข้อความทั่วไป (ไม่ใช่โค้ด)
-      await replyText(replyToken, `รับแล้ว: ${text}`);
+      // echo ทั่วไป
+      await replyMessage(replyToken, `รับแล้ว: ${text}`);
     }
 
-    res.status(200).end();
+    console.log(`[LINE webhook] ok in ${Date.now()-t0}ms`);
+    res.status(200).end(); // ตอบ 200 เสมอ กัน LINE ยิงซ้ำ
   } catch (err) {
     console.error('LINE webhook error:', err?.stack || err);
-    res.status(200).end();
+    res.status(200).end(); // กัน retry
   }
 });
 

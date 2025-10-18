@@ -18,7 +18,6 @@ const paymentRoutes    = require('./routes/paymentRoutes');
 const debtRoutes       = require('./routes/debtRoutes.js');
 const adminProofs      = require('./routes/admin.paymentProofs');
 const adminLineRoutes  = require('./routes/admin.line');
-const lineWebhook      = require('./routes/lineWebhook');
 
 /* =========================
  * Middlewares / Controllers
@@ -38,12 +37,20 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 /* =====================================================
  * LINE Webhook — ต้องมาก่อน body parsers เสมอ
  * ===================================================== */
-const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
 
-// รับ raw body เฉพาะเส้นทาง Webhook (จำเป็นต่อการตรวจลายเซ็น)
-app.use(LINE_WEBHOOK_PATH, express.raw({ type: 'application/json' }));
-// mount router ของ LINE หลัง raw body
-app.use(lineWebhook);
+/* =====================================================
+ * LINE Webhook — ต้องมาก่อน body parsers เสมอ
+ * ===================================================== */
+const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
+const lineWebhook = require('./routes/lineWebhook');
+
+// ✅ ใช้ app.post และใช้ express.raw กับสกุล '*/*' ให้ครอบคลุมทุก content-type ของ LINE
+app.post(
+  LINE_WEBHOOK_PATH,
+  express.raw({ type: '*/*' }),
+  lineWebhook
+);
+
 
 /* =========================
  * Body parsers (สำหรับ API อื่น)

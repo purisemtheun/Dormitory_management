@@ -37,6 +37,33 @@ async function notifyTx(conn, { tenantId, type, title, body, refType = null, ref
 }
 
 /* ------------------------------------------------------------------ */
+/* helper: คำนวณ due_date จาก period_ym (YYYY-MM)
+ * - ถ้า body ส่ง due_date_day มา จะใช้วันนั้น (แต่ไม่เกินจำนวนวันของเดือน)
+ * - ถ้าไม่ส่ง จะใช้วันสุดท้ายของเดือน
+/* ------------------------------------------------------------------ */
+function computeDueDate(periodYm, dueDateDay) {
+  // periodYm: '2025-10'
+  const [yStr, mStr] = String(periodYm).split('-');
+  const y = Number(yStr);
+  const m = Number(mStr); // 1-12
+  if (!y || !m) throw new Error('invalid period_ym');
+
+  // จำนวนวันของเดือน
+  const daysInMonth = new Date(y, m, 0).getDate(); // new Date(y, m, 0) = last day of month (m is 1-12)
+  let day = Number(dueDateDay || 0);
+
+  if (!day || day < 1) {
+    day = daysInMonth; // default: last day of month
+  } else if (day > daysInMonth) {
+    day = daysInMonth; // clamp
+  }
+
+  const dd = String(day).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  return `${y}-${mm}-${dd}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* GET /api/admin/invoices/pending                                    */
 /* ------------------------------------------------------------------ */
 async function getPendingInvoices(_req, res) {
@@ -102,26 +129,28 @@ async function createInvoice(req, res) {
     }
 
     const invoice_no = await getNextInvoiceNo(conn);
+    const finalDue = due_date || computeDueDate(period_ym, req.body?.due_date_day);
+
     const [ins] = await conn.query(
       `INSERT INTO invoices
          (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at)
        VALUES
          (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
-      [invoice_no, tenant_id, t.room_id || null, period_ym, amount, due_date]
+      [invoice_no, tenant_id, t.room_id || null, period_ym, amount, finalDue]
     );
     const newInvoiceId = ins.insertId;
 
     // แจ้งเตือนภายในระบบ
     const type  = 'invoice_issued';
     const title = 'ใบแจ้งหนี้ใหม่';
-    const body  = `รหัสบิล ${invoice_no} | ยอด ${Number(amount).toFixed(2)} | ครบกำหนด ${due_date ?? '-'}`;
+    const body  = `รหัสบิล ${invoice_no} | ยอด ${Number(amount).toFixed(2)} | ครบกำหนด ${finalDue ?? '-'}`;
     await notifyTx(conn, {
       tenantId: tenant_id,
       type, title, body,
       refType: 'invoice', refId: newInvoiceId
     });
 
-    // ยิง LINE (ใช้ conn เพื่อ log ในทรานแซกชันเดียวกัน)
+    // ยิง LINE
     await pushLineAfterNotification(conn, { tenant_id, type, title, body });
 
     if (conn.commit) await conn.commit();
@@ -139,7 +168,7 @@ async function createInvoice(req, res) {
 /* POST /api/admin/invoices/generate-month (ออกบิลทั้งเดือน + แจ้ง)   */
 /* ------------------------------------------------------------------ */
 async function generateMonth(req, res) {
-  const { period_ym, amount_default } = req.body || {};
+  const { period_ym, amount_default, due_date_day } = req.body || {};
   const month = period_ym || new Date().toISOString().slice(0, 7);
 
   const conn = await getConn();
@@ -168,11 +197,12 @@ async function generateMonth(req, res) {
     for (const t of tenants) {
       const invoice_no = await getNextInvoiceNo(conn);
       const amt = amount_default ?? t.price ?? 0;
+      const due_date = computeDueDate(month, due_date_day ?? process.env.RENT_DUE_DAY);
 
       const [ins] = await conn.query(
-        `INSERT INTO invoices (invoice_no, tenant_id, room_id, period_ym, amount, status, created_at)
-         VALUES (?, ?, ?, ?, ?, 'unpaid', NOW())`,
-        [invoice_no, t.tenant_id, t.room_id || null, month, amt]
+        `INSERT INTO invoices (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
+        [invoice_no, t.tenant_id, t.room_id || null, month, amt, due_date]
       );
       const invId = ins.insertId;
       createdCount++;
@@ -180,7 +210,7 @@ async function generateMonth(req, res) {
       // แจ้งเตือน + ยิง LINE รายคน
       const type  = 'invoice_generated';
       const title = 'ออกใบแจ้งหนี้ประจำงวด';
-      const body  = `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${Number(amt).toFixed(2)}`;
+      const body  = `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${Number(amt).toFixed(2)} | ครบกำหนด ${due_date}`;
 
       await notifyTx(conn, {
         tenantId: t.tenant_id, type, title, body, refType: 'invoice', refId: invId
@@ -441,6 +471,37 @@ async function listDebts(_req, res) {
     res.status(500).json({ error: e.message || 'Internal error' });
   }
 }
+async function resendInvoiceNotification(req, res) {
+  try {
+    const id = req.params.id;
+    const [[inv]] = await db.query(
+      `SELECT id, tenant_id, invoice_no, amount, period_ym, due_date
+         FROM invoices WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!inv) return res.status(404).json({ error: 'invoice not found' });
+
+    const type  = 'invoice_generated';
+    const title = 'ออกใบแจ้งหนี้ประจำงวด';
+    const body  = `งวด ${inv.period_ym} | รหัสบิล ${inv.invoice_no} | ยอด ${Number(inv.amount).toFixed(2)} | ครบกำหนด ${inv.due_date ?? '-'}`;
+
+    await db.query(
+      `INSERT INTO notifications
+         (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
+       VALUES (?, ?, ?, ?, 'invoice', ?, 'unread', NOW())`,
+      [inv.tenant_id, type, title, body, inv.id]
+    );
+
+    const { pushLineAfterNotification } = require('../services/notifyAfterInsert');
+    await pushLineAfterNotification(null, { tenant_id: inv.tenant_id, type, title, body });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('resendInvoiceNotification error:', e);
+    res.status(500).json({ error: e.message || 'Internal error' });
+  }
+}
+
 
 module.exports = {
   getPendingInvoices,
@@ -449,4 +510,5 @@ module.exports = {
   decideInvoice,
   cancelInvoice,
   listDebts,
+  resendInvoiceNotification,
 };
