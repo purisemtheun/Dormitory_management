@@ -4,9 +4,9 @@ import TenantNavbar from "../../components/nav/TenantNavbar";
 
 export default function TenantLayout() {
   return (
-    <div className="tn-shell">
-      <TenantNavbar />      {/* แสดงแถบบนแค่ที่นี่ */}
-      <main className="tn-container">
+    <div className="tn-layout">
+      <TenantNavbar />
+      <main className="tn-main">
         <Outlet />
       </main>
     </div>

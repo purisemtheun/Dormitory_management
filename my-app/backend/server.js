@@ -8,46 +8,49 @@ const path = require('path');
 const app = express();
 
 /* =========================
- * Route modules (CommonJS)
+ * Route modules
  * ========================= */
-const authRoutes    = require('./routes/authRoutes');
-const repairRoutes  = require('./routes/repairRoutes');
-const roomRoutes    = require('./routes/roomRoutes');
-const adminRoutes   = require('./routes/adminRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
-const debtRoutes    = require('./routes/debtRoutes.js');
-
-// ❗️ไฟล์สามตัวด้านล่างต้อง export แบบ CommonJS:  module.exports = router
-const adminProofs   = require('./routes/admin.paymentProofs');
+const authRoutes     = require('./routes/authRoutes');
+const repairRoutes   = require('./routes/repairRoutes');
+const roomRoutes     = require('./routes/roomRoutes');
+const adminRoutes    = require('./routes/adminRoutes');
+const paymentRoutes  = require('./routes/paymentRoutes');
+const debtRoutes     = require('./routes/debtRoutes.js');
+const adminProofs    = require('./routes/admin.paymentProofs');
+const adminLineRoutes= require('./routes/admin.line');
+const lineWebhook    = require('./routes/lineWebhook');
 
 /* =========================
  * Middlewares / Controllers
  * ========================= */
 const { requireAuth } = require('./middlewares/auth');
 const paymentCtrl     = require('./controllers/paymentController');
-
-// 👉 ใช้สำหรับ alias /api/technicians (มี RBAC หลายบทบาท)
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
 const repairController = require('./controllers/repairController');
 
 /* =========================
- * Global middlewares
+ * Global middlewares (base)
  * ========================= */
 app.use(cors({ origin: true, credentials: true }));
+
+/* =========================
+ * LINE Webhook BEFORE body parsers
+ * ========================= */
+app.use(lineWebhook);
+
+/* =========================
+ * Body parsers
+ * ========================= */
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
  * Static: /uploads
  * ========================= */
-const UPLOADS_DIR = path.resolve(__dirname, 'uploads'); // เปลี่ยนได้ตามโครงสร้างโปรเจกต์
+const UPLOADS_DIR = path.resolve(__dirname, 'uploads');
 app.use(
   '/uploads',
-  express.static(UPLOADS_DIR, {
-    fallthrough: true,
-    immutable: true,
-    maxAge: '7d',
-  })
+  express.static(UPLOADS_DIR, { fallthrough: true, immutable: true, maxAge: '7d' })
 );
 
 /* =========================
@@ -56,18 +59,25 @@ app.use(
 app.use('/api/auth',     authRoutes);
 app.use('/api/repairs',  repairRoutes);
 app.use('/api/rooms',    roomRoutes);
-app.use('/api/admin',    adminRoutes);
+app.use('/api/admin',    adminRoutes);         // ← ห้ามซ้ำ
 app.use('/api/payments', paymentRoutes);
-app.use('/api/admin', adminRoutes);
 app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api', require('./routes/notifications'));
 
+// เส้นทางย่อยของแอดมิน (payment proofs)
+app.use('/api/admin', adminProofs);
 
-// ให้หน้า frontend เก่าที่เรียก /api/invoices ยังใช้ได้
+// Admin LINE (ตั้งค่าทดสอบ)
+app.use('/api', adminLineRoutes);
+
+/* =========================
+ * Aliases / legacy
+ * ========================= */
 app.get('/api/invoices', requireAuth, (req, res, next) =>
   paymentCtrl.getMyLastInvoices(req, res, next)
 );
 
-// ✅ Alias ตรงนี้: รายชื่อช่างสำหรับ dropdown (admin/staff)
+// Technician helper routes
 app.get(
   '/api/technicians',
   verifyToken,
@@ -80,15 +90,12 @@ app.get(
   authorizeRoles('technician'),
   repairController.getAllRepairs
 );
-
-// อัปเดตสถานะโดย "ช่าง"
 app.patch(
   '/api/tech/repairs/:id/status',
   verifyToken,
   authorizeRoles('technician'),
   repairController.techSetStatus
 );
-
 app.get(
   '/api/tech/repairs/:id',
   verifyToken,
@@ -96,14 +103,11 @@ app.get(
   repairController.getRepairById
 );
 
-// ✅ ใช้ authorizeRoles('admin') แทน requireRole('admin')
+// Debts (only admin)
 app.use('/api/debts', verifyToken, authorizeRoles('admin'), debtRoutes);
 
-// เส้นทางย่อยของแอดมิน (payment proofs)
-app.use('/api/admin', adminProofs);
-
 /* =========================
- * 404 (ไว้ท้ายสุดของ routes)
+ * 404
  * ========================= */
 app.use((req, res) => {
   res.status(404).json({
@@ -114,7 +118,7 @@ app.use((req, res) => {
 });
 
 /* =========================
- * Error handler (ต้องมี 4 พารามิเตอร์)
+ * Error handler
  * ========================= */
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err && (err.stack || err.message || err));

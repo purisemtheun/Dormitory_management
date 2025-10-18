@@ -10,7 +10,6 @@ export default function RoomInfoPage() {
     try {
       setLoading(true);
       setErr("");
-      // ใช้ getMine ให้ตรงกับ room.api.js
       const res = await roomApi.getMine();
       setRooms(Array.isArray(res) ? res : []);
     } catch (e) {
@@ -25,13 +24,15 @@ export default function RoomInfoPage() {
 
   return (
     <>
-      <h1 className="tn-title">ข้อมูลห้องพัก</h1>
-      <p className="muted">แสดงเฉพาะห้องของบัญชีผู้ใช้ปัจจุบัน</p>
-
-      <div style={{ margin: "12px 0" }}>
-        <button onClick={load} className="btn-primary" style={{ width: "auto", padding: "10px 14px" }}>
-          รีเฟรช
-        </button>
+      {/* ⬇️ ย้ายหัวข้อ + ปุ่มรีเฟรชมาอยู่ในกรอบ room-section เดียวกับการ์ด */}
+      <div className="room-section">
+        <div className="section-head">
+          <div>
+            <h1 className="tn-title" style={{ margin: 0 }}>ข้อมูลห้องพัก</h1>
+            <p className="muted" style={{ marginTop: 4 }}>แสดงเฉพาะห้องของบัญชีผู้ใช้ปัจจุบัน</p>
+          </div>
+          <button onClick={load} className="btn-primary section-head__btn">รีเฟรช</button>
+        </div>
       </div>
 
       {loading && <div className="card"><p className="muted">กำลังโหลดข้อมูล…</p></div>}
@@ -41,7 +42,7 @@ export default function RoomInfoPage() {
       )}
 
       {!loading && !err && rooms.length > 0 && (
-        <div className="room-grid">
+        <div className="room-section">
           {rooms.map((r) => (
             <article key={r.room_id} className="room-card">
               <header className="room-head">
@@ -53,19 +54,20 @@ export default function RoomInfoPage() {
 
               <dl className="kv">
                 <div className="kv-row">
-                  <dt>รหัสห้อง</dt><dd>{r.room_id}</dd>
+                  <dt>รหัสห้อง</dt>
+                  <dd>{r.room_id}</dd>
                 </div>
                 <div className="kv-row">
                   <dt>สิ่งอำนวยความสะดวก</dt>
                   <dd>
-                    {r.has_fan && "พัดลม "}
-                    {r.has_aircon && "แอร์ "}
-                    {r.has_fridge && "ตู้เย็น "}
-                    {(!r.has_fan && !r.has_aircon && !r.has_fridge) ? "-" : ""}
+                    {[r.has_fan && "พัดลม", r.has_aircon && "แอร์", r.has_fridge && "ตู้เย็น"]
+                      .filter(Boolean)
+                      .join(" · ") || "-"}
                   </dd>
                 </div>
                 <div className="kv-row">
-                  <dt>ราคา/เดือน</dt><dd>{Number(r.price).toLocaleString()} บาท</dd>
+                  <dt>ราคา/เดือน</dt>
+                  <dd>{r.price != null ? Number(r.price).toLocaleString() : "-"} บาท</dd>
                 </div>
               </dl>
             </article>

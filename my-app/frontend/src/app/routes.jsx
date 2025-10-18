@@ -13,16 +13,17 @@ import RegisterPage from "../pages/auth/RegisterPage";
 // Admin pages
 import AdminRoomManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
-import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";  // ฟอร์มออกบิล
-import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";            // ตารางรีวิว/อนุมัติการจ่าย
+import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";
+import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
-import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";            // ค้นหาหนี้ (มีอยู่แล้ว)
-import AdminDashboardPage from "../pages/admin/DashboardPage";              // ✅ เพิ่ม Dashboard
+import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
+import AdminDashboardPage from "../pages/admin/DashboardPage";
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
+import NotificationCenter from "../pages/tenant/NotificationCenter"; // ✅ แก้พาธ
 
 // Technician page
 import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
@@ -58,6 +59,7 @@ const router = createBrowserRouter([
       { index: true, element: <RoomInfoPage /> },
       { path: "repairs", element: <TenantRepairCreatePage /> },
       { path: "payments", element: <PaymentPage /> },
+      { path: "notifications", element: <NotificationCenter /> }, // ✅ ไม่มี /tenant นำหน้า
     ],
   },
 
@@ -72,24 +74,13 @@ const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      // ✅ ให้หน้าแรกของแอดมินไป Dashboard
       { index: true, element: <Navigate to="/admin/dashboard" replace /> },
-
-      // ✅ Dashboard
       { path: "dashboard", element: <AdminDashboardPage /> },
-
-      // จัดการห้อง/ผู้เช่า
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
-
-      // ฟอร์มสร้างบิล และรีวิวการชำระ
       { path: "payments", element: <AdminInvoiceCreatePage /> },
       { path: "payments/review", element: <AdminPaymentsPage /> },
-
-      // จัดการงานซ่อม
       { path: "repairs", element: <AdminRepairManagement /> },
-
-      // ค้นหาหนี้
       { path: "debts", element: <AdminDebtSearchPage /> },
     ],
   },
