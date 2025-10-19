@@ -1,26 +1,20 @@
 // backend/config/db.js
 const mysql = require('mysql2/promise');
-const fs = require('fs');
-const path = require('path');
 
 const host = process.env.DB_HOST || '127.0.0.1';
 const port = Number(process.env.DB_PORT || 3306);
 
 function readCA() {
-  // 1) ENV ใหม่ (แนะนำ)
+  // 1) ENV ใหม่
   let ca = (process.env.DB_SSL_CA || '').trim();
-  // 2) ENV เดิม (fallback)
+  // 2) ENV เดิม (รองรับชื่อ DB_CA)
   if (!ca) ca = (process.env.DB_CA || '').trim();
-  // 3) Base64 (ถ้ามี)
+  // 3) base64 (ถ้าใส่มา)
   if (!ca && process.env.DB_CA_B64) {
     try { ca = Buffer.from(process.env.DB_CA_B64, 'base64').toString('utf8').trim(); } catch {}
   }
-  // 4) จากไฟล์ (กำหนดทาง ENV หรือใช้ไฟล์ดีฟอลต์ในโปรเจกต์)
-  if (!ca) {
-    const filePath = process.env.DB_SSL_CA_FILE || path.join(__dirname, 'aiven-ca.pem');
-    try { ca = fs.readFileSync(filePath, 'utf8').trim(); } catch {}
-  }
-  if (ca && ca.includes('\\n')) ca = ca.replace(/\\n/g, '\n'); // รองรับกรณีวาง ENV แบบ single-line
+  // 4) กรณีใส่ \n ใน .env ให้แปลงกลับเป็น newline จริง
+  if (ca && ca.includes('\\n')) ca = ca.replace(/\\n/g, '\n');
   return ca || null;
 }
 
@@ -34,18 +28,16 @@ const cfg = {
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4',
-  timezone: 'Z', // ใช้ UTC; ถ้าจะใช้เวลาไทย ให้เป็น '+07:00'
+  timezone: 'Z',
 };
 
-// ── SSL/TLS (Aiven ส่วนใหญ่บังคับ TLS) ─────────────────────
+// TLS/SSL (Aiven บังคับ)
 if (process.env.DB_SSL === '1' || /aivencloud\.com$/i.test(host)) {
   const ca = readCA();
   const reject = String(process.env.DB_SSL_REJECT_UNAUTHORIZED || 'true') === 'true';
   cfg.ssl = ca
     ? { ca, minVersion: 'TLSv1.2', servername: host, rejectUnauthorized: reject }
-    // ไม่มี CA → อย่าเพิ่งปิดความปลอดภัยถ้าไม่จำเป็น
-    : { minVersion: 'TLSv1.2', servername: host, rejectUnauthorized: reject };
+    : { minVersion: 'TLSv1.2', servername: host, rejectUnauthorized: reject }; // ไม่มี CA ก็ยัง TLS (ถ้าอยากผ่อนปรน ใส่ DB_SSL_REJECT_UNAUTHORIZED=false)
 }
 
-const pool = mysql.createPool(cfg);
-module.exports = pool;
+module.exports = mysql.createPool(cfg);
