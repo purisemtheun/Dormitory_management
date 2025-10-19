@@ -23,7 +23,7 @@ const adminLineRoutes  = require('./routes/admin.line');
  * Middlewares / Controllers
  * ========================= */
 const { requireAuth } = require('./middlewares/auth');
-const paymentCtrl     = require('./controllers/paymentController');
+const paymentCtrl     = require('./controllers/paymentController.js');
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
 const repairController = require('./controllers/repairController');
 
