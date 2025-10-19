@@ -37,20 +37,15 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 /* =====================================================
  * LINE Webhook — ต้องมาก่อน body parsers เสมอ
  * ===================================================== */
-
-/* =====================================================
- * LINE Webhook — ต้องมาก่อน body parsers เสมอ
- * ===================================================== */
 const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
 const lineWebhook = require('./routes/lineWebhook');
 
-// ✅ ใช้ app.post และใช้ express.raw กับสกุล '*/*' ให้ครอบคลุมทุก content-type ของ LINE
-app.post(
+// ✅ เปลี่ยนมาใช้ app.use เพื่อให้ path ถูก trim แล้วตรงกับ router.post('/') ภายในไฟล์ router
+app.use(
   LINE_WEBHOOK_PATH,
   express.raw({ type: '*/*' }),
   lineWebhook
 );
-
 
 /* =========================
  * Body parsers (สำหรับ API อื่น)
@@ -144,7 +139,6 @@ app.use((err, req, res, next) => {
 });
 
 app.get('/health', (_req, res) => res.status(200).send('ok'));
-
 
 /* =========================
  * Start server
