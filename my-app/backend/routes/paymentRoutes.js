@@ -1,8 +1,8 @@
-// routes/paymentRoutes.js
+// backend/routes/paymentRoutes.js
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-const paymentCtrl = require('../controllers/paymentController');
+const paymentController = require('../controllers/paymentController'); // ✅ ใช้ชื่อตัวแปรตามที่กำหนด
 const { requireAuth } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -22,15 +22,16 @@ const upload = multer({
 });
 
 // GET /api/payments/my-invoices
-router.get('/my-invoices', requireAuth, paymentCtrl.getMyLastInvoices);
+router.get('/my-invoices', requireAuth, paymentController.getMyLastInvoices);
 
 // GET /api/payments/qr (public)
-router.get('/qr', paymentCtrl.getActiveQR);
+router.get('/qr', paymentController.getActiveQR);
 
 // POST /api/payments/submit (multipart) - ต้อง login
-router.post('/submit', requireAuth, upload.single('slip'), paymentCtrl.submitPayment);
+router.post('/submit', requireAuth, upload.single('slip'), paymentController.submitPayment);
 
-router.post('/approve', requireAuth, paymentCtrl.approvePayment);
-router.post('/reject',  requireAuth, paymentCtrl.rejectPayment);
+// อนุมัติ/ปฏิเสธ (กำหนด RBAC ใน middleware อื่นภายนอก route นี้ก็ได้)
+router.post('/approve', requireAuth, paymentController.approvePayment);
+router.post('/reject',  requireAuth, paymentController.rejectPayment);
 
 module.exports = router;

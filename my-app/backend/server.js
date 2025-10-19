@@ -23,7 +23,7 @@ const adminLineRoutes  = require('./routes/admin.line');
  * Middlewares / Controllers
  * ========================= */
 const { requireAuth } = require('./middlewares/auth');
-const paymentCtrl     = require('./controllers/paymentController.js');
+const paymentCtrl     = require('./controllers/paymentController'); // ✅ ใช้ path/ชื่อให้ตรง (ไม่ใส่ .js)
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
 const repairController = require('./controllers/repairController');
 
@@ -40,7 +40,7 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
 const lineWebhook = require('./routes/lineWebhook');
 
-// ✅ เปลี่ยนมาใช้ app.use เพื่อให้ path ถูก trim แล้วตรงกับ router.post('/') ภายในไฟล์ router
+// ✅ ใช้ app.use เพื่อให้ path ถูก trim แล้วตรงกับ router.post('/') ในไฟล์ router
 app.use(
   LINE_WEBHOOK_PATH,
   express.raw({ type: '*/*' }),
