@@ -1,71 +1,40 @@
+// backend/controllers/invoiceController.js
 const db = require('../config/db');
-const { pushLineAfterNotification } = require('../services/notifyAfterInsert');
+const { createNotification } = require('../services/notification');
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_BASE_URL =
   (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.replace(/\/+$/, '')) ||
   `http://localhost:${PORT}`;
 
-/* ------------------------------------------------------------------ */
-/* Helper: เปิด connection (รองรับ pool.getConnection)                */
-/* ------------------------------------------------------------------ */
+/* ===== Helpers ===== */
 async function getConn() {
   return typeof db.getConnection === 'function' ? await db.getConnection() : db;
 }
 
-/* ------------------------------------------------------------------ */
-/* Helper: เลขที่ใบแจ้งหนี้ (ต้องมีตาราง invoice_counter (id=1))     */
-/* ------------------------------------------------------------------ */
 async function getNextInvoiceNo(conn) {
   await conn.query(`UPDATE invoice_counter SET last_no = last_no + 1 WHERE id = 1`);
   const [[{ last_no }]] = await conn.query(`SELECT last_no FROM invoice_counter WHERE id = 1`);
   return `D${String(last_no).padStart(4, '0')}`;
 }
 
-/* ------------------------------------------------------------------ */
-/* Helper: บันทึก Notification ภายในทรานแซกชันเดียวกัน               */
-/* NOTE: ตาราง notifications ควรมี ENUM type ตามนี้เท่านั้น:
-   ('invoice_issued','invoice_generated','payment_approved','payment_rejected','invoice_canceled','repair_updated')
-/* ------------------------------------------------------------------ */
-async function notifyTx(conn, { tenantId, type, title, body, refType = null, refId = null }) {
-  await conn.query(
-    `INSERT INTO notifications
-       (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'unread', NOW())`,
-    [tenantId, type, title, body, refType, refId]
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* helper: คำนวณ due_date จาก period_ym (YYYY-MM)
- * - ถ้า body ส่ง due_date_day มา จะใช้วันนั้น (แต่ไม่เกินจำนวนวันของเดือน)
- * - ถ้าไม่ส่ง จะใช้วันสุดท้ายของเดือน
-/* ------------------------------------------------------------------ */
 function computeDueDate(periodYm, dueDateDay) {
-  // periodYm: '2025-10'
   const [yStr, mStr] = String(periodYm).split('-');
   const y = Number(yStr);
-  const m = Number(mStr); // 1-12
+  const m = Number(mStr);
   if (!y || !m) throw new Error('invalid period_ym');
-
-  // จำนวนวันของเดือน
-  const daysInMonth = new Date(y, m, 0).getDate(); // new Date(y, m, 0) = last day of month (m is 1-12)
+  const daysInMonth = new Date(y, m, 0).getDate();
   let day = Number(dueDateDay || 0);
-
-  if (!day || day < 1) {
-    day = daysInMonth; // default: last day of month
-  } else if (day > daysInMonth) {
-    day = daysInMonth; // clamp
-  }
-
+  if (!day || day < 1) day = daysInMonth;
+  else if (day > daysInMonth) day = daysInMonth;
   const dd = String(day).padStart(2, '0');
   const mm = String(m).padStart(2, '0');
   return `${y}-${mm}-${dd}`;
 }
 
-/* ------------------------------------------------------------------ */
-/* GET /api/admin/invoices/pending                                    */
-/* ------------------------------------------------------------------ */
+/* ====== Endpoints ====== */
+
+// (A) บิลรออนุมัติ/ตรวจสลิป
 async function getPendingInvoices(_req, res) {
   try {
     const [rows] = await db.query(`
@@ -102,9 +71,7 @@ async function getPendingInvoices(_req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* POST /api/admin/invoices  (ออกบิลรายคน + แจ้งเตือน + ยิง LINE)     */
-/* ------------------------------------------------------------------ */
+// (B) ออกบิลรายคน + แจ้งเตือน
 async function createInvoice(req, res) {
   const conn = await getConn();
   try {
@@ -138,23 +105,19 @@ async function createInvoice(req, res) {
          (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
       [invoice_no, tenant_id, t.room_id || null, period_ym, amount, finalDue]
     );
-    const newInvoiceId = ins.insertId;
+    const invoiceId = ins.insertId;
 
-    // แจ้งเตือนภายในระบบ
-    const type  = 'invoice_issued';
-    const title = 'ใบแจ้งหนี้ใหม่';
-    const body  = `รหัสบิล ${invoice_no} | ยอด ${Number(amount).toFixed(2)} | ครบกำหนด ${finalDue ?? '-'}`;
-    await notifyTx(conn, {
-      tenantId: tenant_id,
-      type, title, body,
-      refType: 'invoice', refId: newInvoiceId
-    });
-
-    // ยิง LINE
-    await pushLineAfterNotification(conn, { tenant_id, type, title, body });
+    // ✅ แจ้งเตือน (อยู่ในทรานแซกชัน)
+    await createNotification({
+      tenant_id,
+      type: 'invoice_created',
+      title: '📄 ใบแจ้งหนี้ใหม่',
+      body: `รอบบิล ${period_ym}\nยอดชำระ ${Number(amount || 0).toLocaleString()} บาท`,
+      created_by: req.user?.id ?? null,
+    }, conn);
 
     if (conn.commit) await conn.commit();
-    res.status(201).json({ ok: true, invoice_id: newInvoiceId, invoice_no });
+    res.status(201).json({ ok: true, invoice_id: invoiceId, invoice_no });
   } catch (e) {
     if (conn.rollback) await conn.rollback();
     console.error('createInvoice error:', e);
@@ -164,9 +127,7 @@ async function createInvoice(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* POST /api/admin/invoices/generate-month (ออกบิลทั้งเดือน + แจ้ง)   */
-/* ------------------------------------------------------------------ */
+// (C) ออกบิลทั้งเดือน + แจ้งเตือนรายคน
 async function generateMonth(req, res) {
   const { period_ym, amount_default, due_date_day } = req.body || {};
   const month = period_ym || new Date().toISOString().slice(0, 7);
@@ -204,20 +165,15 @@ async function generateMonth(req, res) {
          VALUES (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
         [invoice_no, t.tenant_id, t.room_id || null, month, amt, due_date]
       );
-      const invId = ins.insertId;
       createdCount++;
 
-      // แจ้งเตือน + ยิง LINE รายคน
-      const type  = 'invoice_generated';
-      const title = 'ออกใบแจ้งหนี้ประจำงวด';
-      const body  = `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${Number(amt).toFixed(2)} | ครบกำหนด ${due_date}`;
-
-      await notifyTx(conn, {
-        tenantId: t.tenant_id, type, title, body, refType: 'invoice', refId: invId
-      });
-      await pushLineAfterNotification(conn, {
-        tenant_id: t.tenant_id, type, title, body
-      });
+      await createNotification({
+        tenant_id: t.tenant_id,
+        type: 'invoice_generated',
+        title: 'ออกใบแจ้งหนี้ประจำงวด',
+        body: `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${Number(amt).toLocaleString()} บาท | ครบกำหนด ${due_date}`,
+        created_by: req.user?.id ?? null,
+      }, conn);
     }
 
     if (conn.commit) await conn.commit();
@@ -231,23 +187,18 @@ async function generateMonth(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* PATCH /api/admin/invoices/:id/decide (approve/reject) + แจ้งเตือน   */
-/* ------------------------------------------------------------------ */
+// (D) ตัดสินใจอนุมัติ/ปฏิเสธ + แจ้งเตือน
 async function decideInvoice(req, res) {
-  const conn = typeof db.getConnection === 'function' ? await db.getConnection() : db;
-
+  const conn = await getConn();
   try {
     const invoiceId = req.params.id;
     const { action, approved_by } = req.body;
-
     if (!invoiceId || !['approve', 'reject'].includes(action)) {
       return res.status(400).json({ error: 'invalid input' });
     }
 
     if (conn.beginTransaction) await conn.beginTransaction();
 
-    // ล็อกบิล
     const [[inv]] = await conn.query(
       `SELECT id, tenant_id, invoice_no, amount, due_date, status, slip_url
          FROM invoices
@@ -281,7 +232,7 @@ async function decideInvoice(req, res) {
                   payment_date = COALESCE(payment_date, CURDATE()),
                   verified_by = ?
             WHERE payment_id = ?`,
-          [approved_by ?? null, usedPaymentId]
+          [approved_by ?? req.user?.id ?? null, usedPaymentId]
         );
       } else {
         usedPaymentId =
@@ -293,7 +244,7 @@ async function decideInvoice(req, res) {
           `INSERT INTO payments
              (payment_id, invoice_id, amount, payment_date, slip_url, verified_by, status, note)
            VALUES (?,?,?,?,?,?, 'approved', NULL)`,
-          [usedPaymentId, inv.id, inv.amount, new Date(), inv.slip_url ?? null, approved_by ?? null]
+          [usedPaymentId, inv.id, inv.amount, new Date(), inv.slip_url ?? null, approved_by ?? req.user?.id ?? null]
         );
       }
 
@@ -304,17 +255,13 @@ async function decideInvoice(req, res) {
         [invoiceId]
       );
 
-      // แจ้งเตือน + LINE
-      const type  = 'payment_approved';
-      const title = 'ชำระเงินอนุมัติแล้ว';
-      const body  = `บิล ${inv.invoice_no} | ยอด ${Number(inv.amount).toFixed(2)} | วันที่ ${new Date().toISOString().slice(0,10)}`;
-
-      await notifyTx(conn, {
-        tenantId: inv.tenant_id, type, title, body, refType: 'invoice', refId: inv.id
-      });
-      await pushLineAfterNotification(conn, {
-        tenant_id: inv.tenant_id, type, title, body
-      });
+      await createNotification({
+        tenant_id: inv.tenant_id,
+        type: 'payment_approved',
+        title: '✅ ชำระเงินอนุมัติแล้ว',
+        body: `บิล ${inv.invoice_no} | ยอด ${Number(inv.amount || 0).toLocaleString()} บาท | วันที่ ${new Date().toISOString().slice(0,10)}`,
+        created_by: req.user?.id ?? approved_by ?? null,
+      }, conn);
 
       if (conn.commit) await conn.commit();
       return res.json({
@@ -344,16 +291,13 @@ async function decideInvoice(req, res) {
       [invoiceId]
     );
 
-    const type  = 'payment_rejected';
-    const title = 'การชำระเงินถูกปฏิเสธ';
-    const body  = `บิล ${inv.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`;
-
-    await notifyTx(conn, {
-      tenantId: inv.tenant_id, type, title, body, refType: 'invoice', refId: inv.id
-    });
-    await pushLineAfterNotification(conn, {
-      tenant_id: inv.tenant_id, type, title, body
-    });
+    await createNotification({
+      tenant_id: inv.tenant_id,
+      type: 'payment_rejected',
+      title: 'การชำระเงินถูกปฏิเสธ',
+      body: `บิล ${inv.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`,
+      created_by: req.user?.id ?? null,
+    }, conn);
 
     if (conn.commit) await conn.commit();
     return res.json({
@@ -371,12 +315,10 @@ async function decideInvoice(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* PATCH /api/admin/invoices/:id/cancel (ยกเลิกบิล) + แจ้งเตือน + LINE */
-/* ------------------------------------------------------------------ */
+// (E) ยกเลิกบิล + แจ้งเตือน (นอกทรานแซกชัน)
 async function cancelInvoice(req, res) {
   try {
-    const key = req.params.id; // อาจเป็น id หรือรหัสบิล D0001
+    const key = req.params.id; // id หรือ invoice_no
     const useInvoiceNo = /^[A-Za-z]/.test(String(key));
 
     const [found] = await db.query(
@@ -392,34 +334,23 @@ async function cancelInvoice(req, res) {
     const inv = found[0];
 
     const [r] = await db.query(
-      `
-      UPDATE invoices
-         SET status='canceled', updated_at = NOW()
-       WHERE ${useInvoiceNo ? 'invoice_no' : 'id'} = ?
-         AND status IN ('unpaid','pending','overdue')
-      `,
+      `UPDATE invoices
+          SET status='canceled', updated_at = NOW()
+        WHERE ${useInvoiceNo ? 'invoice_no' : 'id'} = ?
+          AND status IN ('unpaid','pending','overdue')`,
       [key]
     );
-
     if (!r.affectedRows) {
-      return res
-        .status(404)
-        .json({ error: 'invoice not found or not cancellable' });
+      return res.status(404).json({ error: 'invoice not found or not cancellable' });
     }
 
-    // แจ้งเตือน + LINE (นอกทรานแซกชัน)
-    const type  = 'invoice_canceled';
-    const title = 'ยกเลิกใบแจ้งหนี้';
-    const body  = `บิล ${inv.invoice_no} ถูกยกเลิกแล้ว`;
-
-    await db.query(
-      `INSERT INTO notifications
-         (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-       VALUES
-         (?, ?, ?, ?, 'invoice', ?, 'unread', NOW())`,
-      [inv.tenant_id, type, title, body, inv.id]
-    );
-    await pushLineAfterNotification(null, { tenant_id: inv.tenant_id, type, title, body });
+    await createNotification({
+      tenant_id: inv.tenant_id,
+      type: 'invoice_canceled',
+      title: 'ยกเลิกใบแจ้งหนี้',
+      body: `บิล ${inv.invoice_no} ถูกยกเลิกแล้ว`,
+      created_by: req.user?.id ?? null,
+    });
 
     res.json({ ok: true });
   } catch (e) {
@@ -428,49 +359,7 @@ async function cancelInvoice(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-async function listDebts(_req, res) {
-  try {
-    const [rows] = await db.query(`
-      WITH x AS (
-        SELECT
-          i.tenant_id,
-          COALESCE(u.fullname, CONCAT('Tenant#', i.tenant_id)) AS tenant_name,
-          u.phone,
-          r.room_no,
-          i.due_date,
-          vb.remaining,
-          ROW_NUMBER() OVER (PARTITION BY i.tenant_id ORDER BY i.due_date DESC, i.id DESC) AS rn
-        FROM invoices i
-        JOIN v_invoice_balance vb ON vb.invoice_id = i.id
-        LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
-        LEFT JOIN users   u ON u.id = t.user_id
-        LEFT JOIN rooms   r ON r.room_id = t.room_id
-        WHERE vb.remaining > 0
-      )
-      SELECT
-        tenant_id,
-        tenant_name,
-        phone,
-        room_no,
-        SUM(remaining) AS outstanding,
-        MAX(due_date) AS last_due,
-        CASE
-          WHEN MAX(due_date) < CURDATE() THEN DATEDIFF(CURDATE(), MAX(due_date))
-          ELSE 0
-        END AS overdue_days
-      FROM x
-      WHERE rn <= 3
-      GROUP BY tenant_id, tenant_name, phone, room_no
-      ORDER BY outstanding DESC, last_due DESC
-    `);
-
-    res.json(rows);
-  } catch (e) {
-    console.error('listDebts error:', e);
-    res.status(500).json({ error: e.message || 'Internal error' });
-  }
-}
+// (F) ส่งแจ้งเตือนของบิลเดิมซ้ำอีกครั้ง
 async function resendInvoiceNotification(req, res) {
   try {
     const id = req.params.id;
@@ -481,19 +370,13 @@ async function resendInvoiceNotification(req, res) {
     );
     if (!inv) return res.status(404).json({ error: 'invoice not found' });
 
-    const type  = 'invoice_generated';
-    const title = 'ออกใบแจ้งหนี้ประจำงวด';
-    const body  = `งวด ${inv.period_ym} | รหัสบิล ${inv.invoice_no} | ยอด ${Number(inv.amount).toFixed(2)} | ครบกำหนด ${inv.due_date ?? '-'}`;
-
-    await db.query(
-      `INSERT INTO notifications
-         (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-       VALUES (?, ?, ?, ?, 'invoice', ?, 'unread', NOW())`,
-      [inv.tenant_id, type, title, body, inv.id]
-    );
-
-    const { pushLineAfterNotification } = require('../services/notifyAfterInsert');
-    await pushLineAfterNotification(null, { tenant_id: inv.tenant_id, type, title, body });
+    await createNotification({
+      tenant_id: inv.tenant_id,
+      type: 'invoice_generated',
+      title: 'ออกใบแจ้งหนี้ประจำงวด',
+      body: `งวด ${inv.period_ym} | รหัสบิล ${inv.invoice_no} | ยอด ${Number(inv.amount || 0).toLocaleString()} บาท | ครบกำหนด ${inv.due_date ?? '-'}`,
+      created_by: req.user?.id ?? null,
+    });
 
     res.json({ ok: true });
   } catch (e) {
@@ -502,13 +385,11 @@ async function resendInvoiceNotification(req, res) {
   }
 }
 
-
 module.exports = {
   getPendingInvoices,
   createInvoice,
   generateMonth,
   decideInvoice,
   cancelInvoice,
-  listDebts,
   resendInvoiceNotification,
 };

@@ -15,7 +15,12 @@
     "jest": "^29.7.0",
     "supertest": "^7.1.4"
   },
-  "scripts": {
-    "test": "jest --runInBand"
-  }
+ "scripts": {
+  "start": "node server.js",
+  "dev": "nodemon server.js",
+  "db:test": "node ./test-connection.js",
+  "db:size": "node ./check-db-size.js",
+  "test": "jest --runInBand"
 }
+}
+

@@ -143,6 +143,9 @@ app.use((err, req, res, next) => {
   res.status(status).json(payload);
 });
 
+app.get('/health', (_req, res) => res.status(200).send('ok'));
+
+
 /* =========================
  * Start server
  * ========================= */

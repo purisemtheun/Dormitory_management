@@ -1,19 +1,28 @@
-// backend/db.js  (หรือ backend/config/db.js)
+// backend/config/db.js
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const fs = require('fs');
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+
+const host = process.env.DB_HOST || '127.0.0.1';
+let ssl;
+if (host.includes('aivencloud.com')) {
+  const caPath = path.join(__dirname, '../certs/ca.pem');
+  ssl = { ca: fs.readFileSync(caPath), minVersion: 'TLSv1.2', servername: host };
+}
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
+  host,
+  port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'dorm_db',
-  port: Number(process.env.DB_PORT) || 3306,
-  charset: 'utf8mb4',          // รองรับภาษาไทย/อีโมจิ
-  waitForConnections: true,    // แทนที่จะโยน error เมื่อเต็ม
-  connectionLimit: 10,         // ปรับตามเครื่อง
+  database: process.env.DB_NAME || 'dormitory_management',
+  waitForConnections: true,
+  connectionLimit: 10,
   queueLimit: 0,
-  timezone: 'Z',               // เก็บเป็น UTC (แนะนำให้สอดคล้องทั้งระบบ)
-  dateStrings: false           // ถ้าอยากให้ DATE/TIMESTAMP เป็น String ให้ปรับเป็น true
+  charset: 'utf8mb4',
+  timezone: 'Z',
+  ssl, // จะเปิดเฉพาะตอน host เป็น aivencloud.com
 });
 
 module.exports = pool;

@@ -1,10 +1,9 @@
+// backend/controllers/repairController.js
 const db = require("../config/db");
-const STATUS = require("./repairStatus");
-const { pushLineAfterNotification } = require('../services/notifyAfterInsert');
+const STATUS = require("./repairStatus"); // ควรเป็น enum: { NEW, ASSIGNED, IN_PROGRESS, DONE, REJECTED, CANCELLED }
+const { createNotification } = require('../services/notification');
 
-/* ======================================================
- * 1) สร้างใบแจ้งซ่อม  (⚡️เพิ่ม: แจ้งเตือน + LINE)
- * ====================================================== */
+/* 1) สร้างใบแจ้งซ่อม (แจ้งเตือนผู้เช่าทันทีถ้าทราบ tenant_id) */
 exports.createRepair = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -42,28 +41,17 @@ exports.createRepair = async (req, res) => {
     const [ins] = await db.query(
       `INSERT INTO repairs
          (room_id, tenant_id, title, description, image_url, status, created_at, updated_at)
-       VALUES
-         (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [effectiveRoomId, tenant_id, title, description, finalImageUrl, STATUS.NEW]
     );
 
-    // ⚡️ แจ้งเตือนผู้เช่าทันที (ถ้าทราบ tenant_id)
     if (tenant_id) {
-      const type  = 'repair_updated';
-      const ntitle = 'รับเรื่องแจ้งซ่อมเรียบร้อย';
-      const body  = effectiveRoomId
-        ? `ห้อง: ${effectiveRoomId}\nเรื่อง: ${title}`
-        : `เรื่อง: ${title}`;
-
-      await db.query(
-        `INSERT INTO notifications
-           (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-         VALUES
-           (?, ?, ?, ?, 'repair', ?, 'unread', NOW())`,
-        [tenant_id, type, ntitle, body, ins.insertId]
-      );
-      await pushLineAfterNotification(null, {
-        tenant_id, type, title: ntitle, body
+      await createNotification({
+        tenant_id,
+        type: 'repair_updated',
+        title: '🧾 รับเรื่องแจ้งซ่อมเรียบร้อย',
+        body: effectiveRoomId ? `ห้อง: ${effectiveRoomId}\nเรื่อง: ${title}` : `เรื่อง: ${title}`,
+        created_by: req.user?.id ?? null,
       });
     }
 
@@ -74,9 +62,7 @@ exports.createRepair = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 2) ดึงรายการซ่อมทั้งหมด (กรองตาม role)
- * ====================================================== */
+/* 2) ดึงรายการซ่อมทั้งหมด (กรองตาม role) */
 exports.getAllRepairs = async (req, res) => {
   try {
     const role = req.user.role;
@@ -117,9 +103,7 @@ exports.getAllRepairs = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 3) รายละเอียดงาน
- * ====================================================== */
+/* 3) รายละเอียดงาน */
 exports.getRepairById = async (req, res) => {
   try {
     const { id } = req.params; // repair_id
@@ -150,9 +134,7 @@ exports.getRepairById = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 4) อัปเดตข้อมูลงาน
- * ====================================================== */
+/* 4) อัปเดตข้อมูลงาน */
 exports.updateRepair = async (req, res) => {
   try {
     const { id } = req.params; // repair_id
@@ -172,9 +154,7 @@ exports.updateRepair = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 5) ลบงาน (admin)
- * ====================================================== */
+/* 5) ลบงาน (admin) */
 exports.deleteRepair = async (req, res) => {
   try {
     const { id } = req.params; // repair_id
@@ -186,9 +166,7 @@ exports.deleteRepair = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 6) รายชื่อช่าง
- * ====================================================== */
+/* 6) รายชื่อช่าง */
 exports.listTechnicians = async (_req, res) => {
   try {
     const [rows] = await db.query(`
@@ -209,9 +187,7 @@ exports.listTechnicians = async (_req, res) => {
   }
 };
 
-/* ======================================================
- * 7) มอบหมายงาน (admin/manager)  (⚡️เพิ่ม: แจ้งเตือน + LINE)
- * ====================================================== */
+/* 7) มอบหมายงาน (admin/manager) + แจ้งเตือน */
 exports.assignRepair = async (req, res) => {
   try {
     const { id } = req.params; // repair_id
@@ -228,27 +204,19 @@ exports.assignRepair = async (req, res) => {
       [Number(techId), STATUS.ASSIGNED, id]
     );
 
-    // ⚡️ แจ้งเตือนผู้เช่า ว่างานถูกมอบหมายแล้ว
     const [[info]] = await db.query(
       `SELECT tenant_id, room_id, title FROM repairs WHERE repair_id = ? LIMIT 1`,
       [id]
     );
     if (info?.tenant_id) {
-      const type  = 'repair_updated';
-      const title = 'มอบหมายช่างเรียบร้อย';
-      const body  = info.title
-        ? `งาน "${info.title}" (${info.room_id || '-'}) อยู่ระหว่างเตรียมดำเนินการ`
-        : `งานซ่อม (${info.room_id || '-'}) อยู่ระหว่างเตรียมดำเนินการ`;
-
-      await db.query(
-        `INSERT INTO notifications
-           (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-         VALUES
-           (?, ?, ?, ?, 'repair', ?, 'unread', NOW())`,
-        [info.tenant_id, type, title, body, id]
-      );
-      await pushLineAfterNotification(null, {
-        tenant_id: info.tenant_id, type, title, body
+      await createNotification({
+        tenant_id: info.tenant_id,
+        type: 'repair_updated',
+        title: 'มอบหมายช่างเรียบร้อย',
+        body: info.title
+          ? `งาน "${info.title}" (${info.room_id || '-'}) อยู่ระหว่างเตรียมดำเนินการ`
+          : `งานซ่อม (${info.room_id || '-'}) อยู่ระหว่างเตรียมดำเนินการ`,
+        created_by: req.user?.id ?? null,
       });
     }
 
@@ -259,9 +227,7 @@ exports.assignRepair = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 8) แอดมินเปลี่ยนสถานะ (สำหรับ rejected ฯลฯ) (⚡️เพิ่ม: แจ้งเตือน + LINE)
- * ====================================================== */
+/* 8) แอดมินเปลี่ยนสถานะ (บางสถานะ) + แจ้งเตือน */
 exports.adminSetStatus = async (req, res) => {
   try {
     const { id } = req.params;        // repair_id
@@ -276,33 +242,25 @@ exports.adminSetStatus = async (req, res) => {
       [status, id]
     );
 
-    // ⚡️ แจ้งเตือนบางสถานะ
     if ([STATUS.REJECTED, STATUS.CANCELLED, STATUS.ASSIGNED].includes(status)) {
       const [[info]] = await db.query(
         `SELECT tenant_id, room_id, title FROM repairs WHERE repair_id = ? LIMIT 1`,
         [id]
       );
       if (info?.tenant_id) {
-        const type  = 'repair_updated';
-        const title = status === STATUS.REJECTED
-          ? 'คำขอซ่อมถูกปฏิเสธ'
-          : status === STATUS.CANCELLED
-          ? 'ยกเลิกคำขอซ่อม'
+        const title =
+          status === STATUS.REJECTED ? 'คำขอซ่อมถูกปฏิเสธ'
+          : status === STATUS.CANCELLED ? 'ยกเลิกคำขอซ่อม'
           : 'มอบหมายช่างเรียบร้อย';
-        const body  =
-          info.title
-            ? `งาน "${info.title}" (${info.room_id || '-'}) สถานะ: ${status}`
-            : `งานซ่อม (${info.room_id || '-'}) สถานะ: ${status}`;
 
-        await db.query(
-          `INSERT INTO notifications
-             (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-           VALUES
-             (?, ?, ?, ?, 'repair', ?, 'unread', NOW())`,
-          [info.tenant_id, type, title, body, id]
-        );
-        await pushLineAfterNotification(null, {
-          tenant_id: info.tenant_id, type, title, body
+        await createNotification({
+          tenant_id: info.tenant_id,
+          type: 'repair_updated',
+          title,
+          body: info.title
+            ? `งาน "${info.title}" (${info.room_id || '-'}) สถานะ: ${status}`
+            : `งานซ่อม (${info.room_id || '-'}) สถานะ: ${status}`,
+          created_by: req.user?.id ?? null,
         });
       }
     }
@@ -314,9 +272,7 @@ exports.adminSetStatus = async (req, res) => {
   }
 };
 
-/* ======================================================
- * 9) ช่างเปลี่ยนสถานะ (เริ่ม/เสร็จสิ้น) + แจ้งเตือนเมื่อเริ่มและเสร็จ
- * ====================================================== */
+/* 9) ช่างเปลี่ยนสถานะ (start/complete) + แจ้งเตือนเริ่ม/เสร็จ */
 exports.techSetStatus = async (req, res) => {
   try {
     const repairId = req.params.id;
@@ -332,7 +288,6 @@ exports.techSetStatus = async (req, res) => {
 
     if (!want) return res.status(400).json({ error: "action ต้องเป็น start หรือ complete" });
 
-    // ตรวจสิทธิ์เจ้าของงานสำหรับช่าง
     const [own] = await db.query(
       `SELECT status
          FROM repairs
@@ -341,16 +296,13 @@ exports.techSetStatus = async (req, res) => {
         LIMIT 1`,
       [repairId, techId]
     );
-    if (!own.length) {
-      return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้ หรือไม่พบนายซ่อม" });
-    }
+    if (!own.length) return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้ หรือไม่พบนายซ่อม" });
+
     const current = String(own[0].status || "").toLowerCase();
-    if (want === "in_progress" && current !== "assigned") {
+    if (want === "in_progress" && current !== "assigned")
       return res.status(409).json({ error: `สถานะปัจจุบันคือ '${current}' (ต้องเป็น 'assigned')` });
-    }
-    if (want === "done" && current !== "in_progress") {
+    if (want === "done" && current !== "in_progress")
       return res.status(409).json({ error: `สถานะปัจจุบันคือ '${current}' (ต้องเป็น 'in_progress')` });
-    }
 
     await db.query(
       `UPDATE repairs
@@ -362,29 +314,28 @@ exports.techSetStatus = async (req, res) => {
       [want, want, want, repairId]
     );
 
-    // ⚡️ แจ้งเตือนเมื่อเริ่มดำเนินการ / เสร็จสิ้น
     const [[info]] = await db.query(
-      `SELECT tenant_id, room_id, title FROM repairs WHERE repair_id = ? LIMIT 1`,
+      `SELECT tenant_id, room_id, title, priority FROM repairs WHERE repair_id = ? LIMIT 1`,
       [repairId]
     );
     if (info?.tenant_id) {
-      const type  = 'repair_updated';
-      const title = want === 'in_progress' ? 'ช่างเริ่มดำเนินการซ่อม' : 'งานซ่อมเสร็จแล้ว';
-      const body  =
-        info.title
-          ? `งาน "${info.title}" (${info.room_id || '-'}) ${want === 'in_progress' ? 'กำลังดำเนินการ' : 'เสร็จสิ้นเรียบร้อย'}`
-          : `งานซ่อม (${info.room_id || '-'}) ${want === 'in_progress' ? 'กำลังดำเนินการ' : 'เสร็จสิ้นเรียบร้อย'}`;
-
-      await db.query(
-        `INSERT INTO notifications
-           (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-         VALUES
-           (?, ?, ?, ?, 'repair', ?, 'unread', NOW())`,
-        [info.tenant_id, type, title, body, repairId]
-      );
-      await pushLineAfterNotification(null, {
-        tenant_id: info.tenant_id, type, title, body
-      });
+      if (want === 'in_progress') {
+        await createNotification({
+          tenant_id: info.tenant_id,
+          type: 'repair_started',
+          title: '🛠️ งานซ่อมเริ่มดำเนินการแล้ว',
+          body: `${info.title || 'รายการซ่อม'}${info.priority ? `\nความเร่งด่วน: ${info.priority}` : ''}`,
+          created_by: req.user?.id ?? null,
+        });
+      } else if (want === 'done') {
+        await createNotification({
+          tenant_id: info.tenant_id,
+          type: 'repair_completed',
+          title: '✅ งานซ่อมเสร็จสิ้น',
+          body: info.title || 'รายการซ่อม',
+          created_by: req.user?.id ?? null,
+        });
+      }
     }
 
     return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: want });

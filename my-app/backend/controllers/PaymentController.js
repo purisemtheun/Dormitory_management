@@ -5,6 +5,7 @@
 
 const path = require('path');
 const db = require('../config/db');
+const { createNotification } = require('../services/notification'); // ✅ เพิ่มสำหรับแจ้ง LINE
 
 /* ------------------------------------------------------------------ */
 /* Helper: หา tenant_id ของ user ปัจจุบัน                              */
@@ -194,7 +195,7 @@ async function submitPayment(req, res) {
       `
       SELECT id, invoice_no, tenant_id, amount, status
         FROM invoices
-       WHERE (${invoice_no ? 'invoice_no = ?' : 'id = ?'})
+       WHERE ${invoice_no ? 'invoice_no = ?' : 'id = ?'}
        LIMIT 1
       `,
       [invoice_no || invoice_id]
@@ -250,6 +251,7 @@ async function submitPayment(req, res) {
 
 /**
  * PATCH /api/admin/payments/:id/approve
+ * ✅ เสียบแจ้ง LINE อัตโนมัติผ่าน createNotification ภายในทรานแซกชัน
  */
 async function approvePayment(req, res) {
   const paymentId = req.params.id;
@@ -307,6 +309,26 @@ async function approvePayment(req, res) {
       await recalcTenantDebt(conn, invTenant.tenant_id);
     }
 
+    /* ---------- 🔔 แจ้ง LINE: payment_approved ---------- */
+    const [[info]] = await conn.query(
+      `SELECT i.tenant_id, i.period_ym, i.invoice_no, p.amount
+         FROM payments p
+         JOIN invoices i ON i.id = p.invoice_id
+        WHERE p.id = ?
+        LIMIT 1`,
+      [paymentId]
+    );
+    if (info?.tenant_id) {
+      await createNotification({
+        tenant_id: info.tenant_id,
+        type: 'payment_approved',
+        title: '✅ ชำระเงินอนุมัติแล้ว',
+        body: `บิล ${info.invoice_no ?? ''}\nรอบบิล ${info.period_ym}\nยอดที่อนุมัติ ${Number(info.amount || 0).toLocaleString()} บาท`,
+        created_by: req.user?.id ?? null,
+      }, conn);
+    }
+    /* ---------------------------------------------------- */
+
     if (conn.commit) await conn.commit();
     return res.json({ ok: true });
   } catch (e) {
@@ -320,6 +342,7 @@ async function approvePayment(req, res) {
 
 /**
  * PATCH /api/admin/payments/:id/reject
+ * ✅ เสียบแจ้ง LINE: payment_rejected
  */
 async function rejectPayment(req, res) {
   const paymentId = req.params.id;
@@ -361,6 +384,26 @@ async function rejectPayment(req, res) {
     if (invTenant?.tenant_id) {
       await recalcTenantDebt(conn, invTenant.tenant_id);
     }
+
+    /* ---------- 🔔 แจ้ง LINE: payment_rejected ---------- */
+    const [[info]] = await conn.query(
+      `SELECT i.tenant_id, i.invoice_no
+         FROM payments p
+         JOIN invoices i ON i.id = p.invoice_id
+        WHERE p.id = ?
+        LIMIT 1`,
+      [paymentId]
+    );
+    if (info?.tenant_id) {
+      await createNotification({
+        tenant_id: info.tenant_id,
+        type: 'payment_rejected',
+        title: '❌ การชำระเงินถูกปฏิเสธ',
+        body: `บิล ${info.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`,
+        created_by: req.user?.id ?? null,
+      }, conn);
+    }
+    /* --------------------------------------------------- */
 
     if (conn.commit) await conn.commit();
     return res.json({ ok: true });
