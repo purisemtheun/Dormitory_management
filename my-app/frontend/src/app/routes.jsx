@@ -23,7 +23,8 @@ import AdminDashboardPage from "../pages/admin/DashboardPage";
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
-import NotificationCenter from "../pages/tenant/NotificationCenter"; // ✅ แก้พาธ
+import NotificationCenter from "../pages/tenant/NotificationCenter";
+import LineLinkPage from "../pages/tenant/LineLinkPage"; // 🔧 เพิ่ม import ตรงนี้!
 
 // Technician page
 import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
@@ -59,7 +60,8 @@ const router = createBrowserRouter([
       { index: true, element: <RoomInfoPage /> },
       { path: "repairs", element: <TenantRepairCreatePage /> },
       { path: "payments", element: <PaymentPage /> },
-      { path: "notifications", element: <NotificationCenter /> }, // ✅ ไม่มี /tenant นำหน้า
+      { path: "notifications", element: <NotificationCenter /> },
+      { path: "line/link", element: <LineLinkPage /> }, // ✅ เส้นทางผูก LINE
     ],
   },
 
@@ -78,8 +80,8 @@ const router = createBrowserRouter([
       { path: "dashboard", element: <AdminDashboardPage /> },
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
-      { path: "payments", element: <AdminInvoiceCreatePage /> },
-      { path: "payments/review", element: <AdminPaymentsPage /> },
+      { path: "payments", element: <AdminInvoiceCreatePage /> },     // หน้าออกบิล
+      { path: "payments/review", element: <AdminPaymentsPage /> },    // หน้าอนุมัติ/ปฏิเสธ
       { path: "repairs", element: <AdminRepairManagement /> },
       { path: "debts", element: <AdminDebtSearchPage /> },
     ],

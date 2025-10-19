@@ -27,6 +27,11 @@ const paymentCtrl     = require('./controllers/paymentController'); // ✅ ใ�
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
 const repairController = require('./controllers/repairController');
 
+
+const lineRoutes = require("./routes/lineRoutes");
+app.use("/api/line", lineRoutes);
+
+
 /* =========================
  * Global middlewares (base)
  * ========================= */
@@ -89,18 +94,7 @@ app.get('/api/technicians',
   verifyToken, authorizeRoles('admin', 'staff'),
   repairController.listTechnicians
 );
-app.get('/api/tech/repairs',
-  verifyToken, authorizeRoles('technician'),
-  repairController.getAllRepairs
-);
-app.patch('/api/tech/repairs/:id/status',
-  verifyToken, authorizeRoles('technician'),
-  repairController.techSetStatus
-);
-app.get('/api/tech/repairs/:id',
-  verifyToken, authorizeRoles('technician'),
-  repairController.getRepairById
-);
+
 
 // Debts (only admin)
 app.use('/api/debts', verifyToken, authorizeRoles('admin'), debtRoutes);

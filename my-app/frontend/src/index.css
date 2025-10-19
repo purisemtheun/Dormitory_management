@@ -777,3 +777,130 @@ select.input { appearance: none; background-position: right .75rem center; backg
   .section-head{ flex-direction:column; align-items:flex-start; max-width: 100%; padding: 0 10px; }
   .section-head__btn{ height:auto; }
 }
+
+/* ===== LINE Link page (scoped) ===== */
+.line-link {
+  max-width: 760px;
+  margin: 12px auto 0;
+}
+
+/* status/info card */
+.line-link .ll-card {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.06);
+  margin-bottom: 14px;
+}
+
+/* header title on page */
+.line-link .ll-title {
+  margin: 8px 0 10px;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+/* current status row */
+.line-link .ll-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.line-link .ll-badge-ok {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid rgba(16,185,129,.3);
+  font-size: .85rem;
+}
+.line-link .ll-badge-fail {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid rgba(239,68,68,.3);
+  font-size: .85rem;
+}
+
+/* request code button row */
+.line-link .ll-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* token box */
+.line-link .ll-token {
+  display: grid;
+  gap: 10px;
+}
+.line-link .ll-token-box {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 22px;
+  letter-spacing: 4px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--gray-200);
+  background: #f8fafc;
+  text-align: center;
+  user-select: all;
+}
+.line-link .ll-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.line-link .ll-expire {
+  margin-left: auto;
+  color: var(--gray-500);
+  font-size: .9rem;
+}
+
+/* ghost / secondary button (ใช้ในปุ่มคัดลอก) */
+.btn-ghost{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  padding:10px 12px; border-radius:12px; cursor:pointer;
+  background:#fff; color:#111827; border:1px solid var(--gray-200);
+  transition: background .12s, border-color .12s;
+}
+.btn-ghost:hover{ background:#f9fafb; border-color:#d1d5db; }
+
+/* steps list */
+.line-link .ll-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+/* alert / error line */
+.line-link .ll-alert {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239,68,68,.25);
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 10px;
+  font-size: .92rem;
+}
+.ll-head{
+  font-weight:700;
+  font-size:1rem;      /* พอดีกับตัวการ์ด */
+  color:#0f172a;
+  margin-bottom:8px;   /* ชิดกับแถวสถานะ */
+}
+
+/* compact on small screens */
+@media (max-width: 640px){
+  .line-link { max-width: 100%; padding: 0 10px; }
+  .line-link .ll-token-box { font-size: 20px; letter-spacing: 3px; }
+  .line-link .ll-expire { width: 100%; margin-left: 0; }
+}
+

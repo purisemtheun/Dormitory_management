@@ -1,46 +1,55 @@
+// my-app/src/pages/technician/TechnicianRepairsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { getToken } from "../../utils/auth";
+
+// ✅ CRA-safe: ใช้ env ของ CRA เท่านั้น
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000/api";
 
 /* ---------------- API helpers ---------------- */
 const api = {
   listMyRepairs: async () => {
-    const r = await fetch("/api/tech/repairs", {
+    const r = await fetch(`${API_BASE}/repairs/tech`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || "โหลดงานของฉันไม่สำเร็จ");
-    // เผื่อ backend ส่งงานทั้งหมดมา เราจะกรองด้านหน้าไว้ให้เหลือ ASSIGNED/IN_PROGRESS
+    if (!r.ok) throw new Error(d?.error || d?.message || "โหลดงานของฉันไม่สำเร็จ");
     const arr = Array.isArray(d) ? d : [];
-    return arr.filter(
-      (x) => ["assigned", "in_progress"].includes(String(x.status || "").toLowerCase())
+    return arr.filter(x =>
+      ["assigned", "in_progress"].includes(String(x.status || "").toLowerCase())
     );
   },
 
   start: async (repairId) => {
-    const r = await fetch(`/api/tech/repairs/${encodeURIComponent(repairId)}/status`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-      },
-      body: JSON.stringify({ action: "start" }),
-    });
+    const r = await fetch(
+      `${API_BASE}/repairs/tech/${encodeURIComponent(repairId)}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({ action: "start" }),
+      }
+    );
     const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || "เริ่มงานไม่สำเร็จ");
+    if (!r.ok) throw new Error(d?.error || d?.message || "เริ่มงานไม่สำเร็จ");
     return d;
   },
 
   complete: async (repairId) => {
-    const r = await fetch(`/api/tech/repairs/${encodeURIComponent(repairId)}/status`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-      },
-      body: JSON.stringify({ action: "complete" }),
-    });
+    const r = await fetch(
+      `${API_BASE}/repairs/tech/${encodeURIComponent(repairId)}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({ action: "complete" }),
+      }
+    );
     const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || "เสร็จสิ้นงานไม่สำเร็จ");
+    if (!r.ok) throw new Error(d?.error || d?.message || "เสร็จสิ้นงานไม่สำเร็จ");
     return d;
   },
 };
@@ -49,13 +58,13 @@ const api = {
 const badgeStyle = (s) => {
   const m = String(s || "").toLowerCase();
   const bg =
-    m === "assigned" ? "#eef2ff" :
-    m === "in_progress" ? "#fff7ed" :
-    m === "done" ? "#ecfdf5" : "#f3f4f6";
+    m === "assigned"   ? "#eef2ff" :
+    m === "in_progress"? "#fff7ed" :
+    m === "done"       ? "#ecfdf5" : "#f3f4f6";
   const color =
-    m === "assigned" ? "#3730a3" :
-    m === "in_progress" ? "#9a3412" :
-    m === "done" ? "#065f46" : "#374151";
+    m === "assigned"   ? "#3730a3" :
+    m === "in_progress"? "#9a3412" :
+    m === "done"       ? "#065f46" : "#374151";
   return {
     display: "inline-block",
     padding: "4px 10px",
@@ -93,7 +102,7 @@ export default function TechnicianRepairs() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return items;
-    return items.filter((r) =>
+    return items.filter(r =>
       String(r.room_no || r.room_id || "").toLowerCase().includes(s) ||
       String(r.title || "").toLowerCase().includes(s) ||
       String(r.tenant_name || "").toLowerCase().includes(s) ||
@@ -101,14 +110,15 @@ export default function TechnicianRepairs() {
     );
   }, [items, q]);
 
+  const getKey = (r) => r.repair_id ?? r.id;
+
   const onStart = async (rid) => {
     try {
       setBusyId(rid);
       await api.start(rid);
-      // อัปเดตสถานะใน list ทันที (หรือจะ reload ก็ได้)
-      setItems((lst) =>
-        lst.map((x) => (x.repair_id === rid ? { ...x, status: "in_progress" } : x))
-      );
+      setItems(lst => lst.map(x =>
+        getKey(x) === rid ? { ...x, status: "in_progress" } : x
+      ));
     } catch (e) {
       alert(e.message);
     } finally {
@@ -121,8 +131,7 @@ export default function TechnicianRepairs() {
     try {
       setBusyId(rid);
       await api.complete(rid);
-      // เสร็จสิ้นแล้วลบออกจากรายการทันที
-      setItems((lst) => lst.filter((x) => x.repair_id !== rid));
+      setItems(lst => lst.filter(x => getKey(x) !== rid));
     } catch (e) {
       alert(e.message);
     } finally {
@@ -130,12 +139,11 @@ export default function TechnicianRepairs() {
     }
   };
 
-  /* ------------ Layout style ------------ */
   const pageBg = { background: "#f8fafc", minHeight: "calc(100vh - 80px)" };
-  const wrap = { maxWidth: 1100, margin: "24px auto", padding: 16 };
-  const card = { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 6px 16px rgba(0,0,0,.05)", padding: 16 };
-  const th = { textAlign: "left", background: "#f3f4f6", fontWeight: 700, padding: "12px 14px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" };
-  const td = { padding: "12px 14px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top" };
+  const wrap   = { maxWidth: 1100, margin: "24px auto", padding: 16 };
+  const card   = { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 6px 16px rgba(0,0,0,.05)", padding: 16 };
+  const th     = { textAlign: "left", background: "#f3f4f6", fontWeight: 700, padding: "12px 14px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" };
+  const td     = { padding: "12px 14px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top" };
 
   return (
     <div style={pageBg}>
@@ -173,12 +181,13 @@ export default function TechnicianRepairs() {
                 <tbody>
                   {filtered.map((r, idx) => {
                     const status = String(r.status || "").toLowerCase();
+                    const rid = getKey(r);
                     const room = r.room_no || r.room_id || "-";
                     const reporter = r.tenant_name || "-";
                     const canStart = status === "assigned";
                     const canComplete = status === "in_progress";
                     return (
-                      <tr key={r.repair_id}>
+                      <tr key={rid}>
                         <td style={td}>{idx + 1}</td>
                         <td style={td}>{room}</td>
                         <td style={td}>{r.title || "-"}</td>
@@ -188,21 +197,12 @@ export default function TechnicianRepairs() {
                         <td style={td}><span style={badgeStyle(status)}>{status.toUpperCase()}</span></td>
                         <td style={td}>
                           {canStart && (
-                            <button
-                              className="btn"
-                              disabled={busyId === r.repair_id}
-                              onClick={() => onStart(r.repair_id)}
-                            >
+                            <button className="btn" disabled={busyId === rid} onClick={() => onStart(rid)}>
                               ▶️ เริ่มงาน
                             </button>
                           )}
                           {canComplete && (
-                            <button
-                              className="btn"
-                              disabled={busyId === r.repair_id}
-                              onClick={() => onComplete(r.repair_id)}
-                              style={{ marginLeft: 8 }}
-                            >
+                            <button className="btn" disabled={busyId === rid} onClick={() => onComplete(rid)} style={{ marginLeft: 8 }}>
                               ✅ เสร็จสิ้น
                             </button>
                           )}

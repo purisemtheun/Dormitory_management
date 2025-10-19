@@ -1,8 +1,11 @@
 // src/utils/auth.js
-const TOKEN_KEY = "token";
+// ✅ ใช้ค่า env ของ CRA (ต้องขึ้นต้นด้วย REACT_APP_)
+const ENV_TOKEN_KEY = process.env.REACT_APP_TOKEN_KEY;
+const TOKEN_KEY = (ENV_TOKEN_KEY && ENV_TOKEN_KEY.trim()) || "dm_token"; // fallback
+const LEGACY_KEYS = ["token", "app:token", "dm_token"]; // คีย์เก่าที่เคยใช้
 const MAX_TOKEN_LENGTH = 4000;
 
-// ----------------- token storage helpers -----------------
+/* ----------------- token storage helpers ----------------- */
 export function saveToken(token, opts = { remember: true }) {
   if (!token) return;
   try {
@@ -13,22 +16,31 @@ export function saveToken(token, opts = { remember: true }) {
       sessionStorage.setItem(TOKEN_KEY, token);
       localStorage.removeItem(TOKEN_KEY);
     }
-    // cleanup legacy keys
-    try { localStorage.removeItem("app:token"); } catch {}
-    try { localStorage.removeItem("dm_token"); } catch {}
+    // ล้างคีย์เก่า ๆ ให้หมด
+    for (const k of LEGACY_KEYS) {
+      if (k !== TOKEN_KEY) {
+        try { localStorage.removeItem(k); } catch {}
+        try { sessionStorage.removeItem(k); } catch {}
+      }
+    }
   } catch {}
 }
 
 export function getToken() {
   try {
+    // 1) เอาจาก sessionStorage ก่อน (โหมด remember=false)
     const s = sessionStorage.getItem(TOKEN_KEY);
     if (s && s.length > 0 && s.length < MAX_TOKEN_LENGTH) return s;
 
+    // 2) จาก localStorage
     const l = localStorage.getItem(TOKEN_KEY);
     if (l && l.length > 0 && l.length < MAX_TOKEN_LENGTH) return l;
 
-    const alt = localStorage.getItem("app:token") || localStorage.getItem("dm_token");
-    if (alt && alt.length > 0 && alt.length < MAX_TOKEN_LENGTH) return alt;
+    // 3) รองรับคีย์เก่า ๆ (เผื่อผู้ใช้ยังค้างอยู่)
+    for (const k of LEGACY_KEYS) {
+      const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (v && v.length > 0 && v.length < MAX_TOKEN_LENGTH) return v;
+    }
 
     return null;
   } catch {
@@ -38,12 +50,17 @@ export function getToken() {
 
 export function clearToken(opts = { clearCookies: false, cookieNames: [] }) {
   try {
+    // ลบคีย์ปัจจุบัน
     localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem("app:token");
-    localStorage.removeItem("dm_token");
     sessionStorage.removeItem(TOKEN_KEY);
 
-    // ลบเฉพาะคุกกี้ที่ระบุชื่อเท่านั้น (ปลอดภัยกว่า)
+    // ลบคีย์เก่าด้วย
+    for (const k of LEGACY_KEYS) {
+      localStorage.removeItem(k);
+      sessionStorage.removeItem(k);
+    }
+
+    // ลบคุกกี้ที่ระบุชื่อ (ถ้าต้องการ)
     if (opts.clearCookies && Array.isArray(opts.cookieNames)) {
       opts.cookieNames.forEach((name) => {
         try {
@@ -54,14 +71,13 @@ export function clearToken(opts = { clearCookies: false, cookieNames: [] }) {
   } catch {}
 }
 
-// ----------------- JWT helpers -----------------
+/* ----------------- JWT helpers ----------------- */
 function base64UrlToBase64(b64url) {
   let b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
-  // เติม padding ให้ครบพหุคูณ 4
   const pad = b64.length % 4;
   if (pad === 2) b64 += "==";
   else if (pad === 3) b64 += "=";
-  else if (pad !== 0) b64 += "==="; // กัน edge case
+  else if (pad !== 0) b64 += "===";
   return b64;
 }
 
@@ -100,15 +116,11 @@ export function isAuthed() {
   return !!t && !isTokenExpired();
 }
 
-// ----------------- role helpers -----------------
+/* ----------------- role helpers ----------------- */
 export function getRole() {
   const p = getPayload();
   let role = p?.role ?? p?.roles ?? null;
   if (Array.isArray(role)) role = role[0];
-
-  // ❌ อย่า map technician → staff ถ้ามีเส้นทาง /technician จริง
-  // ถ้าจำเป็นต้อง map ให้ทำใน guard/route ที่ต้องการเท่านั้น
-
   return role || null;
 }
 
@@ -118,7 +130,7 @@ export function getDefaultPathByRole(role) {
     case "staff":
       return "/admin";
     case "technician":
-      return "/technician"; // ✅ รองรับหน้า technician แล้ว
+      return "/technician";
     case "tenant":
       return "/tenant";
     default:

@@ -21,6 +21,7 @@ async function createNotification(params, conn = null) {
     return { ok: false, error: 'tenant_id, type, title are required' };
   }
 
+  // ใช้ runner สำหรับ "insert" เท่านั้น (อาจเป็น conn ในทรานแซกชัน)
   const runner = conn ?? db;
 
   try {
@@ -29,44 +30,57 @@ async function createNotification(params, conn = null) {
        VALUES (?, ?, ?, ?, ?)`,
       [tenant_id, type, title, body, created_by]
     );
-    const id = ins.insertId || null;
+    const id = ins?.insertId ?? null;
 
-    // ยิง LINE แบบ async และอัปเดตผลลัพธ์ไว้ในตาราง (ไม่ block response)
-    (async () => {
-      const res = await pushLineAfterNotification(conn, { tenant_id, type, title, body });
+    // ยิง LINE แบบ async ด้วย pool หลักเสมอ (ไม่ใช้ conn เดิม)
+    setTimeout(async () => {
       try {
+        const res = await pushLineAfterNotification(null, { tenant_id, type, title, body });
+        if (!id) return; // ถ้าไม่มี id ก็ไม่ต้องอัปเดตสถานะ
+
         if (res?.ok) {
-          await runner.query(
+          await db.query(
             `UPDATE notifications
-                SET sent_line_at = NOW(), line_status='ok', line_error=NULL
-              WHERE id = ? LIMIT 1`,
+               SET sent_line_at = NOW(), line_status='ok', line_error=NULL
+             WHERE id = ? LIMIT 1`,
             [id]
           );
         } else if (res?.reason === 'NO_LINE_LINK') {
-          await runner.query(
+          await db.query(
             `UPDATE notifications
-                SET line_status='unlinked', line_error=NULL
-              WHERE id = ? LIMIT 1`,
+               SET line_status='unlinked', line_error=NULL
+             WHERE id = ? LIMIT 1`,
             [id]
           );
         } else {
-          await runner.query(
+          await db.query(
             `UPDATE notifications
-                SET line_status='fail', line_error=?
-              WHERE id = ? LIMIT 1`,
+               SET line_status='fail', line_error=?
+             WHERE id = ? LIMIT 1`,
             [String(res?.error || res?.reason || 'unknown'), id]
           );
         }
-      } catch (e) {
-        // เงียบไว้ เพื่อไม่ให้กระทบ flow หลัก
-        console.warn('[notification] update status failed:', e?.message || e);
+      } catch (err) {
+        // ถ้า push/อัปเดตพัง ให้ติดธง fail ไว้เพื่อ debug
+        if (id) {
+          try {
+            await db.query(
+              `UPDATE notifications
+                 SET line_status='fail', line_error=?
+               WHERE id = ? LIMIT 1`,
+              [String(err?.message || err), id]
+            );
+          } catch (_) { /* กลืน เพื่อไม่ให้กระทบผู้ใช้ */ }
+        }
+        console.warn('[notification] async push failed:', err?.message || err);
       }
-    })().catch(() => {});
+    }, 0);
 
     return { ok: true, id };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
 }
+
 
 module.exports = { createNotification };
