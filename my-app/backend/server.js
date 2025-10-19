@@ -38,7 +38,7 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
  * LINE Webhook — ต้องมาก่อน body parsers เสมอ
  * ===================================================== */
 const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
-const lineWebhook = require('./routes/lineWebhook');
+const lineWebhook = require('./routes/lineWebhook.js');
 
 // ✅ ใช้ app.use เพื่อให้ path ถูก trim แล้วตรงกับ router.post('/') ในไฟล์ router
 app.use(
