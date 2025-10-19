@@ -70,7 +70,7 @@ app.use('/api/repairs',  repairRoutes);
 app.use('/api/rooms',    roomRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/admin/dashboard', require('./routes/dashboardRoutes.js'));
 app.use('/api', require('./routes/notifications'));
 
 // เส้นทางย่อยของแอดมิน (payment proofs)
