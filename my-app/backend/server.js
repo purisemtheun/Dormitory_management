@@ -1,5 +1,5 @@
 // backend/server.js
-require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '.envlocal') });
 
 const express = require('express');
 const cors = require('cors');
