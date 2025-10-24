@@ -8,3 +8,7 @@ coverage/
 .DS_Store
 Thumbs.db
 !my-app/backend/.env.example
+my-app/backend/.envlocal
+my-app/backend/.env.local
+.env*
+!my-app/backend/.env.example
