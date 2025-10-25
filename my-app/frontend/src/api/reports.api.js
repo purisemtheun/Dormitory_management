@@ -5,6 +5,7 @@ function authHeaders() {
   const t = localStorage.getItem(TOKEN_KEY);
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
+
 async function j(url, opts = {}) {
   const r = await fetch(url, {
     method: "GET",
@@ -12,8 +13,7 @@ async function j(url, opts = {}) {
     headers: { "Content-Type": "application/json", ...authHeaders(), ...(opts.headers || {}) },
   });
   if (!r.ok) {
-    // ✅ อย่าให้หน้าแตก: ถ้า 404 ให้คืนอาร์เรย์ว่าง
-    if (r.status === 404) return [];
+    if (r.status === 404) return []; // คืน [] เพื่อไม่ให้หน้าแตก
     const text = await r.text().catch(() => "");
     throw new Error(`${r.status} ${r.statusText} :: ${text}`);
   }
@@ -25,14 +25,16 @@ async function j(url, opts = {}) {
 }
 
 export const reportApi = {
-  roomsStatus: () => j(`${BASE}/reports/rooms-status`),
-  revenueMonthly: (months = 6) =>
-    j(`${BASE}/reports/revenue?granularity=monthly&months=${months}`),
-  revenueDaily: (from, to) =>
-    j(`${BASE}/reports/revenue?granularity=daily&from=${from}&to=${to}`),
-  debts: (asOf) => j(`${BASE}/reports/debts${asOf ? `?asOf=${asOf}` : ""}`),
-  payments: (from, to) => j(`${BASE}/reports/payments?from=${from}&to=${to}`),
+  roomsStatus:      () => j(`${BASE}/reports/rooms-status`),
+  revenueMonthly:   (months = 6) => j(`${BASE}/reports/revenue?granularity=monthly&months=${months}`),
+  revenueDaily:     (from, to)   => j(`${BASE}/reports/revenue?granularity=daily&from=${from}&to=${to}`),
+  debts:            (asOf)       => j(`${BASE}/reports/debts${asOf ? `?asOf=${asOf}` : ""}`),
+  payments:         (from, to)   => j(`${BASE}/reports/payments?from=${from}&to=${to}`),
 
-  // ✅ ใหม่: ดึงค่าน้ำ/ค่าไฟรายเดือนต่อห้อง (อิง meter_readings)
-  meterMonthly: (ym) => j(`${BASE}/reports/meter-monthly?ym=${ym}`),
+  // ✅ ใหม่
+  meterMonthly:     (ym)         => j(`${BASE}/reports/meter-monthly?ym=${ym}`),
+  meterSaveReading: (payload)    => j(`${BASE}/reports/meter-reading`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
 };
