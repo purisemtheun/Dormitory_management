@@ -904,3 +904,157 @@ select.input { appearance: none; background-position: right .75rem center; backg
   .line-link .ll-expire { width: 100%; margin-left: 0; }
 }
 
+/* 1) ต้องอยู่บนสุดเสมอ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 2) Design tokens (ตัวแปร) */
+:root{
+  --indigo-600:#4f46e5; --indigo-700:#4338ca;
+  --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-500:#6b7280;
+  --red-500:#ef4444;
+
+  /* sidebar vars */
+  --sb-bg-start:#0f172a; --sb-bg-end:#0b1220; --sb-text:#f8fafc; --sb-muted:#c7d2fe;
+  --sb-hover:rgba(255,255,255,0.04); --sb-active-bg:rgba(79,70,229,0.16);
+  --sb-active-border:#4f46e5;
+}
+
+/* 3) Global resets (CSS ปกติที่ไม่ชนกับ Tailwind) */
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; color: #111827; }
+
+/* 4) กลุ่มที่อยากใช้ Tailwind + @apply: เก็บใน @layer เดียว */
+@layer components {
+  .page-wrap   { @apply max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6; }
+  .page-title  { @apply text-2xl sm:text-3xl font-bold tracking-tight text-slate-800 dark:text-slate-100; }
+  .tabs        { @apply inline-flex items-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-800 p-1 mt-4 mb-6; }
+  .tab-btn     { @apply px-3.5 sm:px-4 py-1.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition; }
+  .tab-btn.is-active { @apply bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow; }
+
+  /* …เก็บ table/badge/btn/kpi/notifications/reports ทั้งหมดตรงนี้… */
+}
+
+/* 5) CSS ปกติที่ไม่อยากใช้ @apply (เช่น layout เฉพาะ, animation, bell panel, sidebar overrides) */
+/* ตัวอย่าง: select dropdown arrow */
+select.input{
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 7l5 6 5-6' stroke='%236b7280' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right .75rem center;
+  padding-right: 2.5rem;
+}
+
+/* Sidebar override (ชัดเจนว่าเป็น override ชุดเดียว) */
+.ad-sidebar{
+  background: linear-gradient(180deg, var(--sb-bg-start), var(--sb-bg-end));
+  color: var(--sb-text);
+  width: 280px;
+  min-height: 100vh;
+  padding: 18px 14px;
+  border-right: 1px solid rgba(255,255,255,0.02);
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+
+/* แสดงเลขห้องให้ครบ ไม่ตัด ไม่ห่อบรรทัด */
+.td-room{
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow: visible;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  letter-spacing: .2px;
+}
+/* ===== รายการสถานะห้อง: layout แบบหัวข้อ 3 คอลัมน์ ===== */
+.list-wrap { border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; background:#fff; }
+.list-head {
+  display:grid; grid-template-columns: 140px 1fr 140px;
+  gap:0; padding:10px 12px; font-weight:700; background: var(--gray-50);
+  border-bottom:1px solid var(--gray-200);
+}
+.list-body { display:flex; flex-direction:column; }
+.list-row {
+  display:grid; grid-template-columns: 140px 1fr 140px;
+  gap:0; padding:10px 12px; border-bottom:1px solid var(--gray-200);
+}
+.list-row:last-child { border-bottom:0; }
+
+.c-room   { white-space:nowrap; font-variant-numeric: tabular-nums; }
+.c-tenant { color:#111827; }
+.c-status { text-align:right; }
+
+/* จอเล็ก: บีบคอลัมน์ห้องให้สั้นลงนิดหน่อย */
+@media (max-width: 520px){
+  .list-head, .list-row { grid-template-columns: 100px 1fr 110px; }
+  .c-status { text-align:left; }
+}
+/* ===== รายการสถานะห้อง: หัวข้อ 3 คอลัมน์ ===== */
+.list-wrap { border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; background:#fff; }
+.list-head {
+  display:grid; grid-template-columns: 180px 1fr 140px;
+  gap:0; padding:10px 12px; font-weight:700; background: var(--gray-50);
+  border-bottom:1px solid var(--gray-200);
+}
+.list-body { display:flex; flex-direction:column; }
+.list-row {
+  display:grid; grid-template-columns: 180px 1fr 140px;
+  gap:0; padding:10px 12px; border-bottom:1px solid var(--gray-200);
+}
+.list-row:last-child { border-bottom:0; }
+
+.c-room{
+  white-space: nowrap;
+  word-break: keep-all;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .2px;
+}
+.c-tenant{ color:#111827; }
+.c-status{ text-align:right; }
+
+@media (max-width: 560px){
+  .list-head, .list-row { grid-template-columns: 120px 1fr 110px; }
+  .c-status{ text-align:left; }
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .page-wrap { @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6; }
+  .page-title { @apply text-2xl sm:text-3xl font-bold tracking-tight text-slate-800 dark:text-slate-100; }
+
+  .tabs { @apply inline-flex items-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-800 p-1 mt-4 mb-6; }
+  .tab-btn { @apply px-3.5 sm:px-4 py-1.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition; }
+  .tab-btn.is-active { @apply bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow; }
+
+  .card { @apply w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm ring-1 ring-black/5 p-4 sm:p-6 mb-6; }
+  .card-title { @apply text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4; }
+
+  .control-row { @apply flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between mb-4; }
+  .field-row { @apply flex items-center gap-2; }
+  .input { @apply w-full sm:w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500; }
+  .select { @apply rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500; }
+
+  .table-wrap { @apply w-full overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700; }
+  .table { @apply w-full text-left text-sm; }
+  .thead { @apply bg-slate-50 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300; }
+  .th { @apply px-4 py-2 font-medium; }
+  .td { @apply px-4 py-2 text-slate-800 dark:text-slate-100; }
+  .tr { @apply odd:bg-white even:bg-slate-50/60 dark:odd:bg-slate-800 dark:even:bg-slate-800/70; }
+  .empty { @apply text-center py-8 text-slate-500 dark:text-slate-400; }
+
+  .badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold; }
+  .badge-vacant   { @apply bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200; }
+  .badge-occupied { @apply bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200; }
+  .badge-overdue  { @apply bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200; }
+  .num { @apply tabular-nums; }
+
+  /* KPI cards */
+  .kpi-grid { @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6; }
+  .kpi { @apply rounded-2xl p-4 shadow-sm ring-1 ring-black/5 bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900; }
+  .kpi-title { @apply text-xs uppercase tracking-wide text-slate-500; }
+  .kpi-value { @apply mt-1 text-2xl font-bold text-slate-900 dark:text-white; }
+  .kpi-sub { @apply text-xs text-slate-500; }
+}

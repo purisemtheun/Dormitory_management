@@ -1,4 +1,3 @@
-// backend/server.js
 require('dotenv').config({ path: require('path').join(__dirname, '.envlocal') });
 
 const express = require('express');
@@ -8,136 +7,131 @@ const path = require('path');
 const app = express();
 
 /* =========================
+ * DB connection
+ * ========================= */
+const db = require('./config/db');
+
+/* =========================
  * Route modules
  * ========================= */
-const authRoutes       = require('./routes/authRoutes');
-const repairRoutes     = require('./routes/repairRoutes');
-const roomRoutes       = require('./routes/roomRoutes');
-const adminRoutes      = require('./routes/adminRoutes');
-const paymentRoutes    = require('./routes/paymentRoutes');
-const debtRoutes       = require('./routes/debtRoutes.js');
-const adminProofs      = require('./routes/admin.paymentProofs');
-const adminLineRoutes  = require('./routes/admin.line');
+const authRoutes = require('./routes/authRoutes');
+const repairRoutes = require('./routes/repairRoutes');
+const roomRoutes = require('./routes/roomRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const debtRoutes = require('./routes/debtRoutes');
+const adminProofs = require('./routes/admin.paymentProofs');
+const adminLineRoutes = require('./routes/admin.line');
+const lineRoutes = require('./routes/lineRoutes');
+const reportRoutesFactory = require('./routes/report.routes');
 
 /* =========================
- * Middlewares / Controllers
+ * Middlewares
  * ========================= */
-const { requireAuth } = require('./middlewares/auth');
-const paymentCtrl     = require('./controllers/paymentController'); // ✅ ใช้ path/ชื่อให้ตรง (ไม่ใส่ .js)
 const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
+const paymentCtrl = require('./controllers/paymentController');
 const repairController = require('./controllers/repairController');
 
-
-const lineRoutes = require("./routes/lineRoutes");
-app.use("/api/line", lineRoutes);
-
-
 /* =========================
- * Global middlewares (base)
+ * Global middlewares
  * ========================= */
 app.disable('x-powered-by');
-const corsOrigin = process.env.CORS_ORIGIN || true;
-app.use(cors({ origin: corsOrigin, credentials: true }));
+app.use(cors({
+  origin: ['http://localhost:3000','http://localhost:3001','http://localhost:3002'],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true,
+}));
 
-/* =====================================================
- * LINE Webhook — ต้องมาก่อน body parsers เสมอ
- * ===================================================== */
+/* =========================
+ * LINE Webhook
+ * ========================= */
 const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
-const lineWebhook = require('./routes/lineWebhook.js');
-
-// ✅ ใช้ app.use เพื่อให้ path ถูก trim แล้วตรงกับ router.post('/') ในไฟล์ router
 app.use(
   LINE_WEBHOOK_PATH,
   express.raw({ type: '*/*' }),
-  lineWebhook
+  require('./routes/lineWebhook')
 );
 
 /* =========================
- * Body parsers (สำหรับ API อื่น)
+ * Body parsers
  * ========================= */
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
- * Static: /uploads
+ * Static files
  * ========================= */
-const UPLOADS_DIR = path.resolve(__dirname, 'uploads');
-app.use(
-  '/uploads',
-  express.static(UPLOADS_DIR, { fallthrough: true, immutable: true, maxAge: '7d' })
-);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* =========================
  * API routes
  * ========================= */
-app.use('/api/auth',     authRoutes);
-app.use('/api/repairs',  repairRoutes);
-app.use('/api/rooms',    roomRoutes);
-app.use('/api/admin',    adminRoutes);
+app.get('/api', (_req, res) => {
+  res.json({
+    name: 'Dormitory API',
+    version: process.env.npm_package_version || 'dev',
+    time: new Date().toISOString()
+  });
+});
+
+// Public routes
+app.use('/api/auth', authRoutes);
+app.use('/api/line', lineRoutes);
+
+// Protected routes
+app.use('/api/repairs', repairRoutes);
+app.use('/api/rooms', roomRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/admin/dashboard', require('./routes/dashboardRoutes.js'));
-app.use('/api', require('./routes/notifications'));
+app.use('/api/notifications', require('./routes/notifications'));
 
-// เส้นทางย่อยของแอดมิน (payment proofs)
-app.use('/api/admin', adminProofs);
+// Admin routes
+app.use('/api/admin/proofs', adminProofs);
+app.use('/api/admin/line', adminLineRoutes);
+app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
 
-// Admin LINE (ตั้งค่า/ทดสอบ)
-app.use('/api', adminLineRoutes);
+// Reports (requires auth + role)
+const reportRoutes = reportRoutesFactory(db);
+app.use('/api/reports', verifyToken, authorizeRoles('admin', 'staff'), reportRoutes);
 
-// Aliases / legacy
-app.get('/api/invoices', requireAuth, (req, res, next) =>
-  paymentCtrl.getMyLastInvoices(req, res, next)
-);
-
-// Technician helper routes
-app.get('/api/technicians',
-  verifyToken, authorizeRoles('admin', 'staff'),
+// Technicians
+app.get('/api/technicians', 
+  verifyToken, 
+  authorizeRoles('admin', 'staff'),
   repairController.listTechnicians
 );
 
-
-// Debts (only admin)
+// Debts (admin only)
 app.use('/api/debts', verifyToken, authorizeRoles('admin'), debtRoutes);
 
+// Legacy routes
+app.get('/api/invoices', verifyToken, paymentCtrl.getMyLastInvoices);
+
 /* =========================
- * 404
+ * Error handlers
  * ========================= */
+// 404
 app.use((req, res) => {
   res.status(404).json({
     error: 'Not Found',
-    path: req.originalUrl,
-    method: req.method,
+    path: req.originalUrl
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error',
+    code: err.code || 'INTERNAL_ERROR'
   });
 });
 
 /* =========================
- * Error handler
- * ========================= */
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err && (err.stack || err.message || err));
-  const status = err?.status || 500;
-  const payload = {
-    error: err?.message || 'Internal server error',
-    code: err?.code || 'INTERNAL_ERROR',
-  };
-  if (process.env.NODE_ENV !== 'production') {
-    payload.stack = err?.stack;
-    payload.request = {
-      method: req.method,
-      url: req.originalUrl,
-      headers: { 'content-type': req.headers['content-type'] },
-      bodyType: typeof req.body,
-    };
-  }
-  res.status(status).json(payload);
-});
-
-app.get('/health', (_req, res) => res.status(200).send('ok'));
-
-/* =========================
  * Start server
  * ========================= */
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

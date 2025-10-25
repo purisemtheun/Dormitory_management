@@ -1,4 +1,3 @@
-// frontend/src/layouts/admin/AdminLayout.jsx
 import React, { useEffect, useState } from "react";
 import { Outlet, NavLink, Link, useLocation } from "react-router-dom";
 
@@ -11,7 +10,7 @@ function AdminSidebarInline() {
   useEffect(() => {
     if (
       location.pathname.startsWith("/admin/payments") ||
-      location.pathname.startsWith("/admin/debts") // ✅ เปิดเมนูเมื่อเข้าเพจค้นหาหนี้
+      location.pathname.startsWith("/admin/debts")
     ) {
       setPaymentsOpen(true);
     }
@@ -38,24 +37,57 @@ function AdminSidebarInline() {
       gap: 8,
       color: COLORS.text,
     },
-    brand: { fontWeight: 800, fontSize: 22, marginBottom: 8, display: "inline-block", color: COLORS.text, textDecoration: "none" },
+    brand: {
+      fontWeight: 800,
+      fontSize: 22,
+      marginBottom: 8,
+      display: "inline-block",
+      color: COLORS.text,
+      textDecoration: "none",
+    },
     label: { marginTop: 12, fontSize: 12, color: COLORS.textSubtle, textTransform: "uppercase" },
-    link: { display: "block", padding: "10px 12px", borderRadius: 10, color: COLORS.text, textDecoration: "none", transition: "background .15s ease" },
+    link: {
+      display: "block",
+      padding: "10px 12px",
+      borderRadius: 10,
+      color: COLORS.text,
+      textDecoration: "none",
+      transition: "background .15s ease",
+    },
     linkActive: { background: COLORS.active },
     linkHover: { background: COLORS.hover },
     toggle: {
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "10px 12px", borderRadius: 10, cursor: "pointer", userSelect: "none",
-      color: COLORS.text, transition: "background .15s ease",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "10px 12px",
+      borderRadius: 10,
+      cursor: "pointer",
+      userSelect: "none",
+      color: COLORS.text,
+      transition: "background .15s ease",
     },
     subWrap: { display: "flex", flexDirection: "column", gap: 6, paddingLeft: 6 },
-    subLink: { display: "block", padding: "8px 10px", borderRadius: 8, textDecoration: "none", color: COLORS.text, transition: "background .15s ease" },
+    subLink: {
+      display: "block",
+      padding: "8px 10px",
+      borderRadius: 8,
+      textDecoration: "none",
+      color: COLORS.text,
+      transition: "background .15s ease",
+    },
     subActive: { background: COLORS.active },
     subHover: { background: COLORS.hover },
     footer: { marginTop: "auto", paddingTop: 12 },
     logoutBtn: {
-      width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`,
-      background: "transparent", color: COLORS.text, cursor: "pointer", transition: "background .15s ease",
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 8,
+      border: `1px solid ${COLORS.border}`,
+      background: "transparent",
+      color: COLORS.text,
+      cursor: "pointer",
+      transition: "background .15s ease",
     },
   };
 
@@ -65,7 +97,7 @@ function AdminSidebarInline() {
       end={end}
       style={({ isActive }) => ({ ...S.link, ...(isActive ? S.linkActive : {}) })}
       onMouseEnter={(e) => Object.assign(e.currentTarget.style, S.linkHover)}
-      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "transparent" })}
+      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "" })}
     >
       {children}
     </NavLink>
@@ -76,7 +108,7 @@ function AdminSidebarInline() {
       to={to}
       style={({ isActive }) => ({ ...S.subLink, ...(isActive ? S.subActive : {}) })}
       onMouseEnter={(e) => Object.assign(e.currentTarget.style, S.subHover)}
-      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "transparent" })}
+      onMouseLeave={(e) => Object.assign(e.currentTarget.style, { background: "" })}
     >
       {children}
     </NavLink>
@@ -116,12 +148,15 @@ function AdminSidebarInline() {
       </div>
       {paymentsOpen && (
         <div style={S.subWrap}>
-          {/* ✅ ให้ตรงกับ routes.jsx */}
           <SubLinkItem to="/admin/debts">ค้นหาหนี้ผู้เช่า</SubLinkItem>
           <SubLinkItem to="/admin/payments/review">อนุมัติการชำระเงิน</SubLinkItem>
           <SubLinkItem to="/admin/payments">ออกใบแจ้งหนี้</SubLinkItem>
         </div>
       )}
+
+      {/* รายงาน */}
+      <div style={S.label}>รายงาน</div>
+      <LinkItem to="/admin/reports">รายงานสรุป</LinkItem>
 
       {/* งานซ่อม */}
       <div

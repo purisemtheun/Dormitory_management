@@ -1,5 +1,5 @@
-// frontend/src/app/routes.jsx
-import React from "react";
+// src/routes.jsx
+import React, { Suspense, lazy } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import AdminLayout from "../layouts/admin/AdminLayout";
@@ -10,7 +10,7 @@ import TechnicianLayout from "../layouts/technician/TechnicianLayout";
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 
-// Admin pages
+// Admin pages (เบาๆ โหลดตรง)
 import AdminRoomManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
 import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";
@@ -19,34 +19,46 @@ import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
 import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
 import AdminDashboardPage from "../pages/admin/DashboardPage";
 
+// ✅ โหลดแบบ Lazy สำหรับรายงาน (หลีกเลี่ยงการประกาศ async component)
+const AdminReportsPage = lazy(() => import("../pages/admin/AdminReportsPage"));
+
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
 import PaymentPage from "../pages/tenant/PaymentPage";
 import TenantRepairCreatePage from "../pages/tenant/TenantRepairCreatePage";
 import NotificationCenter from "../pages/tenant/NotificationCenter";
-import LineLinkPage from "../pages/tenant/LineLinkPage"; // 🔧 เพิ่ม import ตรงนี้!
+import LineLinkPage from "../pages/tenant/LineLinkPage";
 
 // Technician page
 import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
 
 import { getToken, getRole } from "../utils/auth";
+import RouteError from "../components/common/RouteError";
 
-/* Guards */
+/* Guards: ห้ามเป็น async component */
 const RequireAuth = ({ children }) =>
   getToken() ? children : <Navigate to="/login" replace />;
 
 const RequireAdmin = ({ children }) => {
   const role = getRole();
-  return role === "admin" || role === "staff" ? children : <Navigate to="/login" replace />;
+  return role === "admin" || role === "staff"
+    ? children
+    : <Navigate to="/login" replace />;
 };
 
 const RequireTechnician = ({ children }) =>
   getRole() === "technician" ? children : <Navigate to="/login" replace />;
 
+const withSuspense = (el) => (
+  <Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+    {el}
+  </Suspense>
+);
+
 const router = createBrowserRouter([
-  { path: "/", element: <Navigate to="/login" replace /> },
-  { path: "/login", element: <LoginPage /> },
-  { path: "/register", element: <RegisterPage /> },
+  { path: "/", element: <Navigate to="/login" replace />, errorElement: <RouteError /> },
+  { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
+  { path: "/register", element: <RegisterPage />, errorElement: <RouteError /> },
 
   /* Tenant */
   {
@@ -56,12 +68,13 @@ const router = createBrowserRouter([
         <TenantLayout />
       </RequireAuth>
     ),
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <RoomInfoPage /> },
       { path: "repairs", element: <TenantRepairCreatePage /> },
       { path: "payments", element: <PaymentPage /> },
       { path: "notifications", element: <NotificationCenter /> },
-      { path: "line/link", element: <LineLinkPage /> }, // ✅ เส้นทางผูก LINE
+      { path: "line/link", element: <LineLinkPage /> },
     ],
   },
 
@@ -75,6 +88,7 @@ const router = createBrowserRouter([
         </RequireAdmin>
       </RequireAuth>
     ),
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <Navigate to="/admin/dashboard" replace /> },
       { path: "dashboard", element: <AdminDashboardPage /> },
@@ -84,6 +98,8 @@ const router = createBrowserRouter([
       { path: "payments/review", element: <AdminPaymentsPage /> },    // หน้าอนุมัติ/ปฏิเสธ
       { path: "repairs", element: <AdminRepairManagement /> },
       { path: "debts", element: <AdminDebtSearchPage /> },
+      
+      { path: "reports", element:(<AdminReportsPage />) },
     ],
   },
 
@@ -97,10 +113,11 @@ const router = createBrowserRouter([
         </RequireTechnician>
       </RequireAuth>
     ),
+    errorElement: <RouteError />,
     children: [{ index: true, element: <TechnicianRepairsPage /> }],
   },
 
-  { path: "*", element: <Navigate to="/login" replace /> },
+  { path: "*", element: <Navigate to="/login" replace />, errorElement: <RouteError /> },
 ]);
 
 export default router;
