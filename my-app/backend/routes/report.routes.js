@@ -44,16 +44,19 @@ module.exports = (db) => {
         if (!from || !to) {
           return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
         }
-        const [rows] = await db.query(`
-          SELECT DATE(p.payment_date) AS period,
-                 SUM(p.amount) AS revenue,
-                 COUNT(*) AS paid
-          FROM payments p
-          WHERE DATE(p.payment_date) BETWEEN ? AND ?
-          GROUP BY DATE(p.payment_date)
-          ORDER BY period
-        `, [from, to]);
-        return res.json({ data: rows });
+       const [rows] = await db.query(`
+       SELECT
+         DATE(COALESCE(i.paid_at, p.payment_date)) AS date,
+         SUM(p.amount)                               AS total
+        FROM payments p
+       LEFT JOIN invoices i ON i.id = p.invoice_id
+       WHERE COALESCE(i.paid_at, p.payment_date)
+             BETWEEN ? AND ?
+         AND p.status = 'approved'
+       GROUP BY date
+       ORDER BY date
+     `, [`${from} 00:00:00`, `${to} 23:59:59`]);
+     return res.json({ data: rows });
       }
 
       // monthly
@@ -74,29 +77,41 @@ module.exports = (db) => {
    * GET /api/reports/payments?from=YYYY-MM-DD&to=YYYY-MM-DD
    * ผลลัพธ์: { data: [{date, invoiceNo, tenant, amount, payStatus}] }
    */
-  router.get('/payments', async (req, res, next) => {
-    try {
-      const { from, to } = req.query;
-      if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+router.get("/payments", async (req, res) => {
+  try {
+    const { from, to } = req.query; // 'YYYY-MM-DD'
+    const sql = `
+      SELECT
+        COALESCE(i.paid_at, p.payment_date)                           AS paid_at,
+        i.room_id,
+        r.room_number,
+        i.invoice_no,
+        p.amount,
+        COALESCE(u.fullname, u.name)                                   AS tenant_name,
+        p.status                                                       AS payment_status,
+        CASE
+          WHEN p.status = 'approved' THEN 'ชำระเสร็จสิ้น' COLLATE utf8mb4_unicode_ci
+          WHEN p.status = 'pending'  THEN 'รอตรวจสอบ'   COLLATE utf8mb4_unicode_ci
+          WHEN p.status = 'rejected' THEN 'ปฏิเสธ'       COLLATE utf8mb4_unicode_ci
+          ELSE CAST(p.status AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+        END                                                            AS payment_status_th
+      FROM payments p
+      JOIN invoices  i ON i.id        = p.invoice_id
+      LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
+      LEFT JOIN users   u ON u.id      = t.user_id
+      LEFT JOIN rooms   r ON r.room_id = i.room_id
+      WHERE p.payment_date BETWEEN ? AND ?
+        AND p.status IN ('approved','pending','rejected')
+      ORDER BY COALESCE(i.paid_at, p.payment_date) DESC
+    `;
+    const params = [`${from} 00:00:00`, `${to} 23:59:59`];
+    const [rows] = await db.query(sql, params);  // เปลี่ยนจาก pool เป็น db
+    res.json(rows);
+  } catch (err) {
+    next(err); // เพิ่ม error handling
+  }
+});
 
-      const [rows] = await db.query(`
-        SELECT
-          DATE(p.payment_date) AS date,
-          i.invoice_no         AS invoiceNo,
-          u.name               AS tenant,
-          p.amount,
-          p.status             AS payStatus
-        FROM payments p
-        JOIN invoices i ON i.id = p.invoice_id
-        JOIN tenants  t ON t.tenant_id = i.tenant_id AND t.is_deleted = 0
-        JOIN users    u ON u.id = t.user_id
-        WHERE DATE(p.payment_date) BETWEEN ? AND ?
-        ORDER BY date, invoiceNo
-      `, [from, to]);
-
-      res.json({ data: rows });
-    } catch (err) { next(err); }
-  });
 
   /* ===================== 4) Debts (ลูกหนี้ค้าง) ===================== *
    * GET /api/reports/debts?asOf=YYYY-MM-DD

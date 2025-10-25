@@ -189,7 +189,7 @@ exports.getMeterMonthly = async (req, res, next) => {
       `,
       [ym, ym, ym] // ถูกใช้งาน 3 จุดใน query ด้านบน
     );
-
+\
     res.json({ data: rows });
   } catch (err) {
     next(err);
