@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { roomApi } from "../../services/room.api";
+import { roomApi } from "../../api/room.api";
 
 export default function RoomInfoPage() {
   const [rooms, setRooms] = useState([]);

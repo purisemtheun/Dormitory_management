@@ -12,16 +12,20 @@ async function makeTenantId() {
 // ===== Admin/Staff: ดึงห้องทั้งหมด
 exports.listRooms = async (req, res) => {
   try {
-    const role = req.user?.role;
-    if (!role || !['admin', 'staff'].includes(role)) {
-      return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
-    }
-    const [rows] = await db.query(
-      `SELECT room_id, room_number, price, status, has_fan, has_aircon, has_fridge
-       FROM rooms
-       ORDER BY room_id ASC`
-    );
-    res.json(rows);
+    const [rows] = await db.query(`
+  SELECT
+    r.room_id, r.room_number, r.price,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM tenants t
+                   WHERE t.room_id = r.room_id
+                     AND t.is_deleted = 0) THEN 'occupied'
+      ELSE 'available'
+    END AS status,
+    r.has_fan, r.has_aircon, r.has_fridge
+  FROM rooms r
+  ORDER BY r.room_id ASC
+`);
+res.json(rows);
   } catch (e) {
     console.error('listRooms error:', e);
     res.status(500).json({ error: e.message || 'Internal server error' });

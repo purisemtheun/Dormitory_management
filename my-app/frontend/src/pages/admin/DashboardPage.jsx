@@ -1,13 +1,14 @@
 // frontend/src/pages/admin/DashboardPage.jsx
-import { useEffect, useState, useMemo } from 'react';
-import { dashboardApi } from '../../services/dashboard.api';
+import { useEffect, useMemo, useState } from "react";
+import { dashboardApi } from "../../services/dashboard.api";
+import { UserRound } from "lucide-react";
 
-const MONTHS_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const MONTHS_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -15,9 +16,9 @@ export default function DashboardPage() {
         setLoading(true);
         const res = await dashboardApi.get();
         setData(res?.data || null);
-        setErr('');
+        setErr("");
       } catch (e) {
-        setErr(e?.response?.data?.message || e.message || 'โหลดข้อมูลไม่สำเร็จ');
+        setErr(e?.response?.data?.message || e.message || "โหลดข้อมูลไม่สำเร็จ");
       } finally {
         setLoading(false);
       }
@@ -25,286 +26,271 @@ export default function DashboardPage() {
   }, []);
 
   const fmtMoney = (n) =>
-    Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const maxRevenue = useMemo(() => Math.max(...(data?.revenue_by_month || [0]), 1), [data]);
+  const year = data?.year ?? new Date().getFullYear();
+
+  const maxRevenue   = useMemo(() => Math.max(...(data?.revenue_by_month || [0]), 1), [data]);
   const maxInvAmount = useMemo(() => Math.max(...(data?.invoices_amount_by_month || [0]), 1), [data]);
-  const maxInvCount = useMemo(() => Math.max(...(data?.invoices_count_by_month || [0]), 1), [data]);
+  const maxInvCount  = useMemo(() => Math.max(...(data?.invoices_count_by_month || [0]), 1), [data]);
 
   return (
-    <div className="ad-main">
-      <div className="ad-header">
-        <h1 style={{ fontWeight: 800, fontSize: '1.5rem' }}>ภาพรวมระบบ (Dashboard)</h1>
+    <div className="dash">
+      {/* Header */}
+      <div className="dash__head">
+        <h1>ภาพรวมระบบ (Dashboard)</h1>
+        <span className="pill">สรุปรายปี {year}</span>
       </div>
 
+      {/* Alerts */}
       {err && (
-        <div style={{ marginBottom: 12, padding: 12, borderLeft: '4px solid #ef4444', background: '#fff1f2' }}>
-          {err}
+        <div className="alert">
+          <div className="alert__bar" />
+          <div>{err}</div>
         </div>
       )}
-
-      {loading && <div className="ad-panel">กำลังโหลด…</div>}
+      {loading && <div className="panel">กำลังโหลด…</div>}
 
       {!loading && data && (
         <>
-          {/* ===== Summary Cards (สีสันสดใส) ===== */}
-          <div className="sum-grid">
-            <SummaryCard
-              title="ห้องทั้งหมด"
-              value={data.rooms_total}
-              gradient="linear-gradient(135deg,#7dd3fc,#2563eb)"
-              icon="🏠"
-            />
-            <SummaryCard
-              title="ผู้เช่าทั้งหมด"
-              value={data.tenants_total}
-              gradient="linear-gradient(135deg,#fca5a5,#ef4444)"
-              icon="👥"
-            />
-            <SummaryCard
-              title="บิลค้าง/รอดำเนินการ"
-              value={data.invoices_open}
-              gradient="linear-gradient(135deg,#fde68a,#f59e0b)"
-              icon="🧾"
-            />
-            <SummaryCard
-              title="ยอดค้างรวม (บาท)"
-              value={fmtMoney(data.outstanding_total)}
-              gradient="linear-gradient(135deg,#a7f3d0,#10b981)"
-              icon="💰"
-            />
-            <SummaryCard
-              title="คำขอชำระค้างตรวจ"
-              value={data.payments_pending}
-              gradient="linear-gradient(135deg,#c7d2fe,#6366f1)"
-              icon="✅"
-            />
-            <SummaryCard
-              title="รายได้เดือนนี้ (บาท)"
-              value={fmtMoney(data.revenue_this_month)}
-              gradient="linear-gradient(135deg,#fbcfe8,#db2777)"
-              icon="📈"
-            />
-            <SummaryCard
-              title="บิลที่ออกเดือนนี้"
-              value={data.invoices_this_month?.count ?? 0}
-              gradient="linear-gradient(135deg,#ddd6fe,#7c3aed)"
-              icon="📄"
-            />
-            <SummaryCard
-              title="ยอดบิลเดือนนี้ (บาท)"
-              value={fmtMoney(data.invoices_this_month?.amount)}
-              gradient="linear-gradient(135deg,#fef08a,#eab308)"
-              icon="💳"
-            />
-          </div>
+          {/* Stats — ลดช่องไฟ + พื้นหลังไล่เฉดอ่อน */}
+          <section className="stats">
+            <Stat title="ห้องทั้งหมด"           value={data.rooms_total}                     icon="🏠" tone="indigo" />
+            <Stat title="ผู้เช่าทั้งหมด"         value={data.tenants_total}                   icon="👥" tone="violet" />
+            <Stat title="บิลค้าง/รอดำเนินการ"    value={data.invoices_open}                   icon="🧾" tone="amber" />
+            <Stat title="ยอดค้างรวม (บาท)"       value={fmtMoney(data.outstanding_total)}     icon="💰" tone="emerald" />
+            <Stat title="คำขอชำระค้างตรวจ"       value={data.payments_pending}                icon="✅" tone="sky" />
+            <Stat title="รายได้เดือนนี้ (บาท)"    value={fmtMoney(data.revenue_this_month)}    icon="📈" tone="pink" />
+            <Stat title="บิลที่ออกเดือนนี้"       value={data.invoices_this_month?.count ?? 0} icon="📄" tone="purple" />
+            <Stat title="ยอดบิลเดือนนี้ (บาท)"    value={fmtMoney(data.invoices_this_month?.amount)} icon="💳" tone="yellow" />
+          </section>
 
-          {/* ===== Yearly section ===== */}
-          <div className="ad-panel" style={{ marginTop: 12 }}>
-            <div className="ad-panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>สรุปรายปี {data.year}</span>
-              <span className="chip">ใหม่</span>
-            </div>
+          {/* Charts — กรอบพื้นหลังมี tint อ่อน ลดความขาวโล่ง */}
+          <section className="grid-3">
+            <ChartBlock title="รายได้ต่อเดือน (บาท)">
+              <Bars
+                values={data.revenue_by_month}
+                max={maxRevenue}
+                labels={MONTHS_TH}
+                format={fmtMoney}
+                barColor="linear-gradient(180deg, rgba(59,130,246,.95), rgba(37,99,235,.9))"
+              />
+            </ChartBlock>
 
-            <div className="year-grid">
-              <ChartBlock title="รายได้ต่อเดือน (บาท)">
-                <Bars
-                  values={data.revenue_by_month}
-                  max={maxRevenue}
-                  labels={MONTHS_TH}
-                  format={(v) => fmtMoney(v)}
-                />
-              </ChartBlock>
+            <ChartBlock title="ยอดบิลที่ออกต่อเดือน (บาท)">
+              <Bars
+                values={data.invoices_amount_by_month}
+                max={maxInvAmount}
+                labels={MONTHS_TH}
+                format={fmtMoney}
+                barColor="linear-gradient(180deg, rgba(139,92,246,.95), rgba(99,102,241,.9))"
+              />
+            </ChartBlock>
 
-              <ChartBlock title="ยอดบิลที่ออกต่อเดือน (บาท)">
-                <Bars
-                  values={data.invoices_amount_by_month}
-                  max={maxInvAmount}
-                  labels={MONTHS_TH}
-                  format={(v) => fmtMoney(v)}
-                />
-              </ChartBlock>
+            <ChartBlock title="จำนวนบิลต่อเดือน (ฉบับ)">
+              <Bars
+                values={data.invoices_count_by_month}
+                max={maxInvCount}
+                labels={MONTHS_TH}
+                format={(v) => `${v}`}
+                barColor="linear-gradient(180deg, rgba(16,185,129,.95), rgba(5,150,105,.9))"
+              />
+            </ChartBlock>
+          </section>
 
-              <ChartBlock title="จำนวนบิลต่อเดือน (ฉบับ)">
-                <Bars
-                  values={data.invoices_count_by_month}
-                  max={maxInvCount}
-                  labels={MONTHS_TH}
-                  format={(v) => `${v}`}
-                />
-              </ChartBlock>
-            </div>
-          </div>
-
-          <div className="ad-grid-2" style={{ marginTop: 12 }}>
-            {/* Top debtors */}
-            <section className="ad-panel">
-              <div className="ad-panel-title">ลูกหนี้สูงสุด (Top 5)</div>
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>ผู้เช่า</th>
-                      <th>ห้อง</th>
-                      <th style={{ textAlign: 'right' }}>ยอดค้าง</th>
-                      <th>ครบกำหนดล่าสุด</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.top_debtors?.length ? (
-                      data.top_debtors.map((r) => (
-                        <tr key={r.tenant_id}>
-                          <td>{r.tenant_name}</td>
-                          <td>{r.room_no}</td>
-                          <td style={{ textAlign: 'right' }}>{fmtMoney(r.outstanding)}</td>
-                          <td>{r.last_due ? new Date(r.last_due).toLocaleDateString() : '-'}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan="4" style={{ textAlign: 'center', color: 'var(--gray-500)' }}>
-                          ไม่มีข้อมูล
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* Recent payments (ย้ายจากเวอร์ชันก่อน: ตัดออกเพื่อโฟกัสสีสัน/รายปี)
-                ถ้าต้องการกลับมาแสดง recent payments แจ้งได้ครับ */}
-            <section className="ad-panel" style={{ background: 'linear-gradient(135deg,#e0e7ff,#f5f3ff)' }}>
-              <div className="ad-panel-title">คำแนะนำ</div>
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
-                <li>ดู “ลูกหนี้สูงสุด” เพื่อเร่งติดตาม</li>
-                <li>ตรวจ “รายได้ต่อเดือน” เทียบ “ยอดบิล” เพื่อประเมินการจ่ายจริง</li>
-                <li>ดู “ยอดค้างรวม” และ “คำขอชำระค้างตรวจ” ทุกวัน</li>
-              </ul>
-            </section>
-          </div>
+          {/* Top 5 Debtors — อยู่ในกรอบเดียวกับกราฟ ลดช่องว่าง + ใส่ divider อ่อน */}
+          <section className="grid-1">
+            <ChartBlock title="ลูกหนี้สูงสุด (Top 5)">
+              <TopDebtors list={Array.isArray(data.top_debtors) ? data.top_debtors : []} fmtMoney={fmtMoney} />
+            </ChartBlock>
+          </section>
         </>
       )}
 
-      {/* ===== Inline styles เฉพาะหน้านี้ (ให้สีสันโดยไม่ต้องเพิ่มไลบรารี) ===== */}
-      <style>{`
-        .sum-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-          gap: 12px;
-          margin-bottom: 12px;
-        }
-        .sum-card {
-          position: relative;
-          overflow: hidden;
-          border-radius: 14px;
-          color: white;
-          padding: 16px;
-          box-shadow: 0 10px 24px rgba(0,0,0,.12);
-        }
-        .sum-card .icon {
-          position: absolute;
-          right: 12px;
-          top: 10px;
-          font-size: 26px;
-          opacity: .8;
-        }
-        .sum-card .title {
-          font-size: .9rem;
-          opacity: .9;
-        }
-        .sum-card .value {
-          font-weight: 900;
-          font-size: 1.4rem;
-          margin-top: 8px;
-        }
-
-        .chip {
-          display:inline-block;
-          background:#eab308;
-          color:#1f2937;
-          border-radius:999px;
-          padding:.15rem .55rem;
-          font-size:.75rem;
-          font-weight:700;
-        }
-
-        .year-grid {
-          display:grid;
-          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-          gap: 12px;
-        }
-        .chart-block {
-          background:#fff;
-          border:1px solid #e5e7eb;
-          border-radius:12px;
-          padding:12px;
-        }
-        .bars {
-          display:flex; align-items:flex-end; gap:8px; height:160px;
-          margin-top:10px; padding:10px; background:#f9fafb; border-radius:10px;
-        }
-        .bar {
-          flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px;
-        }
-        .bar .rect {
-          width: 100%;
-          border-radius:8px;
-          background: linear-gradient(180deg, rgba(99,102,241,0.95), rgba(59,130,246,0.9));
-          box-shadow: 0 4px 10px rgba(59,130,246,0.25);
-          transition: height .2s ease;
-        }
-        .bar .label {
-          margin-top:6px;
-          font-size:.75rem;
-          color:#6b7280;
-        }
-        .tip {
-          font-size:.8rem; color:#475569;
-        }
-      `}</style>
+      <style>{styles}</style>
     </div>
   );
 }
 
-/* ====== Small components ====== */
-function SummaryCard({ title, value, gradient, icon }) {
+/* ============== Components ============== */
+function Stat({ title, value, icon, tone = "indigo" }) {
+  const tints = {
+    indigo: ["#eef2ff", "#c7d2fe", "#3730a3"],
+    violet: ["#f5f3ff", "#e9d5ff", "#6d28d9"],
+    amber:  ["#fffbeb", "#fde68a", "#92400e"],
+    emerald:["#ecfdf5", "#a7f3d0", "#065f46"],
+    sky:    ["#f0f9ff", "#bae6fd", "#075985"],
+    pink:   ["#fdf2f8", "#fbcfe8", "#9d174d"],
+    purple: ["#f5f3ff", "#ddd6fe", "#5b21b6"],
+    yellow: ["#fefce8", "#fef08a", "#92400e"],
+  }[tone];
+
   return (
-    <div className="sum-card" style={{ background: gradient }}>
-      <div className="icon">{icon}</div>
-      <div className="title">{title}</div>
-      <div className="value">{value}</div>
+    <div className="stat">
+      <div className="stat__badge" style={{ background: `linear-gradient(135deg, ${tints[1]}, ${tints[2]} )` }}>
+        <span className="stat__icon">{icon}</span>
+      </div>
+      <div className="stat__meta">
+        <div className="stat__title">{title}</div>
+        <div className="stat__value">{value}</div>
+      </div>
     </div>
   );
 }
 
 function ChartBlock({ title, children }) {
   return (
-    <div className="chart-block">
-      <div style={{ fontWeight: 800, marginBottom: 4 }}>{title}</div>
+    <div className="panel panel--tint">
+      <div className="panel__title">{title}</div>
       {children}
     </div>
   );
 }
 
-/** กราฟแท่งแบบไม่พึ่งไลบรารี */
-function Bars({ values = [], max = 1, labels = [], format = (v)=>v }) {
+function Bars({ values = [], max = 1, labels = [], format = (v) => v, barColor }) {
+  const total = values.reduce((s, n) => s + Number(n || 0), 0);
   return (
     <>
       <div className="bars">
         {values.map((v, i) => {
-          const h = Math.max(2, Math.round((Number(v || 0) / max) * 140)); // สูงสุด ~140px
+          const h = Math.max(2, Math.round((Number(v || 0) / max) * 136)); // สูงสุด ~136px
           return (
-            <div key={i} className="bar" title={`${labels[i] ?? ''}: ${format(v)}`}>
-              <div className="rect" style={{ height: h }} />
-              <div className="label">{labels[i] ?? ''}</div>
+            <div key={i} className="bar" title={`${labels[i] ?? ""}: ${format(v)}`}>
+              <div className="bar__rect" style={{ height: h, background: barColor }} />
+              <div className="bar__label">{labels[i] ?? ""}</div>
             </div>
           );
         })}
       </div>
-      <div className="tip" style={{ marginTop: 6 }}>
-        รวมปี: {format(values.reduce((s, n) => s + Number(n || 0), 0))}
-      </div>
+      <div className="bars__total">รวมปี: {format(total)}</div>
     </>
   );
 }
+
+function TopDebtors({ list = [], fmtMoney }) {
+  const top = list.slice(0, 5);
+  if (top.length === 0) return <div className="empty">— ไม่มีข้อมูลลูกหนี้ —</div>;
+
+  return (
+    <ul className="debtor">
+      {top.map((r, idx) => (
+        <li key={r.tenant_id ?? idx} className="debtor__item">
+          <div className="debtor__left">
+            <div className="debtor__avatar"><UserRound size={18} /></div>
+            <div className="debtor__info">
+              <div className="debtor__name">{r.tenant_name || "ไม่ระบุชื่อ"}</div>
+              <div className="debtor__sub">
+                <span className="debtor__chip">ห้อง {r.room_no ?? "-"}</span>
+                <span className="debtor__dot">•</span>
+                <span className="debtor__due">ครบกำหนดล่าสุด: {r.last_due ? new Date(r.last_due).toLocaleDateString() : "-"}</span>
+              </div>
+            </div>
+          </div>
+          <div className="debtor__amt">{fmtMoney(r.outstanding)}</div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ============== Styles (คุมโทนไม่ฉูดฉาด, ลดพื้นที่ขาว) ============== */
+const styles = `
+:root{
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --line: #e5e7eb;
+  --muted: #6b7280;
+  --title: #0f172a;
+  --shadow: 0 8px 22px rgba(2,6,23,.06);
+}
+
+.dash{
+  /* พื้นหลังแบบ subtle gradient + pattern เบามากเพื่อลดความขาวล้วน */
+  background:
+    radial-gradient(1200px 600px at -10% -10%, #eef2ff 0%, transparent 35%),
+    radial-gradient(900px 500px at 110% 0%, #ecfdf5 0%, transparent 40%),
+    radial-gradient(900px 500px at 100% 120%, #fff7ed 0%, transparent 35%),
+    var(--bg);
+  border-radius: 14px;
+  padding: 8px;
+}
+
+.dash__head{
+  display:flex; align-items:center; gap:10px;
+  margin: 6px 0 10px;
+}
+.dash__head h1{ margin:0; font-weight:900; font-size:1.45rem; color:var(--title); letter-spacing:.2px; }
+.pill{
+  background:#e3e8ff; color:#1f2937;
+  border:1px solid #c7d2fe; border-radius:999px;
+  padding:.2rem .6rem; font-size:.78rem; font-weight:700;
+}
+
+/* Alert */
+.alert{ display:flex; gap:10px; align-items:center; background:#fff1f2; border:1px solid #fecdd3; border-radius:12px; padding:10px 12px; margin-bottom:10px; box-shadow:var(--shadow); }
+.alert__bar{ width:6px; align-self:stretch; background:#ef4444; border-radius:6px; }
+
+/* Stats zone (compact กว่าเดิม) */
+.stats{
+  display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap:10px; margin-bottom:10px;
+}
+.stat{
+  display:flex; gap:12px; align-items:center;
+  background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px;
+  box-shadow: var(--shadow);
+}
+.stat__badge{
+  width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:white;
+}
+.stat__icon{ font-size:22px; transform: translateY(-1px); }
+.stat__meta{ display:flex; flex-direction:column; }
+.stat__title{ font-size:.88rem; color:#4b5563; }
+.stat__value{ font-weight:900; font-size:1.28rem; color:#111827; }
+
+/* Panels */
+.panel{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px;
+  box-shadow: var(--shadow);
+}
+.panel--tint{
+  /* พื้นหลังมี tint อ่อน ๆ เพื่อลดความขาวโล่ง */
+  background: linear-gradient(180deg, #ffffff, #fbfbfd);
+}
+.panel__title{ font-weight:900; margin-bottom:6px; color:#111827; }
+
+/* Grids */
+.grid-3{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; margin-bottom:10px; }
+.grid-1{ display:grid; grid-template-columns: 1fr; }
+
+/* Bars */
+.bars{
+  display:flex; align-items:flex-end; gap:8px; height:160px;
+  margin-top:6px; padding:10px;
+  background:linear-gradient(180deg,#f8fafc, #f3f4f6); border-radius:10px; border:1px dashed #e2e8f0;
+}
+.bar{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; }
+.bar__rect{ width:100%; border-radius:8px; box-shadow: 0 4px 10px rgba(15,23,42,.12); transition:height .2s ease; }
+.bar__label{ margin-top:6px; font-size:.75rem; color:#64748b; }
+.bars__total{ margin-top:6px; font-size:.84rem; color:#475569; }
+
+/* Top debtors */
+.debtor{ list-style:none; padding:0; margin:4px 0 0; display:flex; flex-direction:column; gap:8px; }
+.debtor__item{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  background:linear-gradient(180deg,#ffffff,#fbfbfd);
+  border:1px solid var(--line); border-radius:12px; padding:10px 12px;
+}
+.debtor__left{ display:flex; align-items:center; gap:10px; min-width:0; }
+.debtor__avatar{ width:34px; height:34px; border-radius:999px; background:#e5e7eb; color:#334155; display:flex; align-items:center; justify-content:center; }
+.debtor__info{ display:flex; flex-direction:column; min-width:0; }
+.debtor__name{ font-weight:800; color:#111827; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.debtor__sub{ font-size:.8rem; color:var(--muted); display:flex; gap:8px; align-items:center; }
+.debtor__chip{ background:#eef2ff; color:#3730a3; border-radius:999px; padding:.08rem .45rem; border:1px solid #c7d2fe; }
+.debtor__dot{ opacity:.6; }
+.debtor__due{ white-space:nowrap; }
+.debtor__amt{ font-weight:900; color:#0f172a; white-space:nowrap; }
+
+/* Empty */
+.empty{ text-align:center; color:#6b7280; padding:18px 0; }
+`;

@@ -1,18 +1,30 @@
 // src/layouts/admin/AdminLayout.jsx
-import React from "react";
-import { Outlet, NavLink } from "react-router-dom";
+import React, { useMemo, useState, useEffect } from "react";
+import { Outlet, NavLink, useLocation } from "react-router-dom";
 import {
-  Home, Users, DollarSign, BarChart2, LogOut, LayoutDashboard
+  Home,
+  Users,
+  DollarSign,
+  BarChart2,
+  LogOut,
+  LayoutDashboard,
+  ChevronDown,
+  ChevronRight,
+  CheckCircle,
+  Search,
+  Receipt,
+  Wrench, // 🔧 ไอคอนเมนูแจ้งซ่อม
 } from "lucide-react";
 
+/* ===== Reusable Link item ===== */
 const LinkItem = ({ to, icon: Icon, label, end }) => (
   <NavLink
     to={to}
     end={end}
     className={({ isActive }) =>
       "flex items-center gap-3 px-4 py-3 rounded-lg text-slate-100/90 transition-all duration-200 " +
-      (isActive 
-        ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30" 
+      (isActive
+        ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30"
         : "hover:bg-white/10 hover:text-white")
     }
   >
@@ -20,6 +32,72 @@ const LinkItem = ({ to, icon: Icon, label, end }) => (
     <span className="font-medium text-sm">{label}</span>
   </NavLink>
 );
+
+/* ===== Finance dropdown group ===== */
+function FinanceGroup() {
+  const location = useLocation();
+
+  const items = useMemo(
+    () => [
+      // ✅ เพิ่ม end:true ให้ตัวที่เป็น prefix ของตัวอื่น
+      { to: "/admin/payments",        label: "ออกใบแจ้งหนี้",  icon: Receipt,     end: true },
+      { to: "/admin/payments/review", label: "อนุมัติชำระเงิน", icon: CheckCircle, end: false },
+      { to: "/admin/debts",           label: "ค้นหาหนี้",        icon: Search,      end: false },
+    ],
+    []
+  );
+
+  const isOnFinance =
+    location.pathname.startsWith("/admin/payments") ||
+    location.pathname.startsWith("/admin/debts");
+
+  const [open, setOpen] = useState(isOnFinance);
+  useEffect(() => { if (isOnFinance) setOpen(true); }, [isOnFinance]);
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={
+          "w-full flex items-center justify-between px-4 py-3 rounded-lg text-slate-100/90 " +
+          "hover:bg-white/10 hover:text-white transition-all duration-200"
+        }
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-3">
+          <span className="inline-flex w-5 h-5 items-center justify-center">
+            <DollarSign className="w-5 h-5" />
+          </span>
+          <span className="font-medium text-sm">การเงิน</span>
+        </span>
+        {open ? <ChevronDown className="w-4 h-4 opacity-80" /> : <ChevronRight className="w-4 h-4 opacity-80" />}
+      </button>
+
+      <div className={"overflow-hidden transition-all duration-200 " + (open ? "max-h-96 opacity-100" : "max-h-0 opacity-0")}>
+        <div className="mt-1 ml-2 pl-2 border-l border-white/10 space-y-1">
+          {items.map(({ to, label, icon: Icon, end }, idx) => (
+            <NavLink
+              key={idx}
+              to={to}
+              end={end}
+              className={({ isActive }) =>
+                "flex items-center gap-2 px-4 py-2 rounded-md text-sm " +
+                (isActive
+                  ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30"
+                  : "text-slate-200/90 hover:bg-white/5 hover:text-white")
+              }
+            >
+              <Icon className="w-4 h-4 flex-shrink-0" />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export default function AdminLayout() {
   const handleLogout = () => {
@@ -38,7 +116,7 @@ export default function AdminLayout() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50">
       <div className="flex min-h-screen">
         {/* Sidebar */}
-        <aside className="admin-sidebar w-72 shrink-0 text-white shadow-2xl">
+        <aside className="admin-sidebar w-72 shrink-0 text-white shadow-2xl bg-slate-900/95">
           <div className="h-full flex flex-col">
             {/* Header */}
             <div className="px-6 py-6 border-b border-white/10">
@@ -58,13 +136,23 @@ export default function AdminLayout() {
               <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 เมนูหลัก
               </div>
-              <LinkItem to="/admin/rooms" icon={Home} label="จัดการห้องพัก" end />
-              <LinkItem to="/admin/tenants" icon={Users} label="จัดการผู้เช่า" />
-              <LinkItem to="/admin/payments" icon={DollarSign} label="การเงิน" />
+
+              {/* ✅ Dashboard (index /admin) */}
+              <LinkItem to="/admin" icon={LayoutDashboard} label="แดชบอร์ด" end />
+
+              <LinkItem to="/admin/rooms"   icon={Home}   label="จัดการห้องพัก" end />
+              <LinkItem to="/admin/tenants" icon={Users}  label="จัดการผู้เช่า" />
+
+              {/* ✅ Repairs management */}
+              <LinkItem to="/admin/repairs" icon={Wrench} label="การจัดการแจ้งซ่อม" />
+
+              {/* ▼ กลุ่มเมนูย่อยการเงิน */}
+              <FinanceGroup />
+
               <LinkItem to="/admin/reports" icon={BarChart2} label="รายงาน" />
             </nav>
 
-            {/* Logout Button */}
+            {/* Logout */}
             <div className="p-4 border-t border-white/10">
               <button
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg
