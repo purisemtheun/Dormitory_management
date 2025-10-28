@@ -140,7 +140,7 @@ router.post('/admin/line/debug/recipient', async (req, res, next) => {
 });
 
 // ────────────────────────────────────────────────────────────
-/* โค้ดช่วย: สุ่มรหัสลิงก์ (ไม่เอา O/0/I/1) */
+/* โค้ดช่วย: สุ่มรหัสลิงก์ + */
 // ────────────────────────────────────────────────────────────
 function generateCode(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

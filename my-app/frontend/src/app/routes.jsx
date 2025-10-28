@@ -1,4 +1,4 @@
-// src/routes.jsx
+// src/app/routes.jsx
 import React, { Suspense, lazy } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
@@ -10,7 +10,7 @@ import TechnicianLayout from "../layouts/technician/TechnicianLayout";
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 
-// Admin pages (เบาๆ โหลดตรง)
+// Admin pages (โหลดตรง)
 import AdminRoomManagePage from "../pages/admin/AdminRoomManagePage";
 import AdminTenantsManagePage from "../pages/admin/AdminTenantsManagePage";
 import AdminInvoiceCreatePage from "../pages/admin/AdminInvoiceCreatePage";
@@ -18,9 +18,6 @@ import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
 import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
 import AdminDashboardPage from "../pages/admin/DashboardPage";
-
-// ✅ โหลดแบบ Lazy สำหรับรายงาน (หลีกเลี่ยงการประกาศ async component)
-const AdminReportsPage = lazy(() => import("../pages/admin/AdminReportsPage"));
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
@@ -35,15 +32,16 @@ import TechnicianRepairsPage from "../pages/technician/TechnicianRepairsPage";
 import { getToken, getRole } from "../utils/auth";
 import RouteError from "../components/common/RouteError";
 
-/* Guards: ห้ามเป็น async component */
+/* ✅ หลังจบ import ทั้งหมด ค่อยประกาศ lazy component */
+const AdminReportsPage = lazy(() => import("../pages/admin/AdminReportsPage"));
+
+/* Guards (ห้ามเป็น async component) */
 const RequireAuth = ({ children }) =>
   getToken() ? children : <Navigate to="/login" replace />;
 
 const RequireAdmin = ({ children }) => {
   const role = getRole();
-  return role === "admin" || role === "staff"
-    ? children
-    : <Navigate to="/login" replace />;
+  return role === "admin" || role === "staff" ? children : <Navigate to="/login" replace />;
 };
 
 const RequireTechnician = ({ children }) =>
@@ -94,12 +92,11 @@ const router = createBrowserRouter([
       { path: "dashboard", element: <AdminDashboardPage /> },
       { path: "rooms", element: <AdminRoomManagePage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
-      { path: "payments", element: <AdminInvoiceCreatePage /> },     // หน้าออกบิล
-      { path: "payments/review", element: <AdminPaymentsPage /> },    // หน้าอนุมัติ/ปฏิเสธ
+      { path: "payments", element: <AdminInvoiceCreatePage /> },     // ออกบิล
+      { path: "payments/review", element: <AdminPaymentsPage /> },    // อนุมัติ/ปฏิเสธ
       { path: "repairs", element: <AdminRepairManagement /> },
       { path: "debts", element: <AdminDebtSearchPage /> },
-      
-      { path: "reports", element:(<AdminReportsPage />) },
+      { path: "reports", element: withSuspense(<AdminReportsPage />) }, // ใช้ Suspense
     ],
   },
 

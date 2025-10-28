@@ -80,7 +80,7 @@ exports.deleteRoom = async (req, res) => {
       [id]
     );
     if (count > 0) {
-      return res.status(400).json({ error: 'Cannot delete: room has active tenants' });
+      return res.status(400).json({ error: 'ไม่สามารถลบได้เนื่องจากมีผู้เช่า ใช้งานห้องนี้อยู่โปรดลบผู้เช่าก่อน' });
     }
 
     // หากต้องการเคลียร์อ้างอิงอัตโนมัติใช้บรรทัดนี้แทน
