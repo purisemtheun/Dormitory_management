@@ -123,14 +123,31 @@ async function getPendingInvoices(_req, res) {
   }
 }
 
-// (B) ออกบิลรายคน + แจ้งเตือน
+// (B) ออกบิลรายคน + แจ้งเตือน  — เวอร์ชันใหม่ รองรับ rent/water/electric
 async function createInvoice(req, res) {
   const conn = await getConn();
   try {
-    const { tenant_id, period_ym, amount, due_date } = (req.body || {});
-    if (!tenant_id || !period_ym || typeof amount === 'undefined') {
-      return res.status(400).json({ error: 'tenant_id, period_ym, amount required' });
+    const {
+      tenant_id,
+      period_ym,
+      amount,           // อนุโลมให้ส่งมาก็ได้
+      due_date,
+      rent_amount = 0,
+      water_amount = 0,
+      electric_amount = 0,
+    } = (req.body || {});
+
+    if (!tenant_id || !period_ym) {
+      return res.status(400).json({ error: 'tenant_id, period_ym required' });
     }
+
+    const rent  = Number(rent_amount) || 0;
+    const water = Number(water_amount) || 0;
+    const elec  = Number(electric_amount) || 0;
+
+    // ถ้า amount ไม่ส่งมา → ใช้ผลรวม rent+water+electric
+    const total = Number.isFinite(Number(amount)) ? Number(amount) : (rent + water + elec);
+    if (!(total > 0)) return res.status(400).json({ error: 'invalid amount' });
 
     if (conn.beginTransaction) await conn.beginTransaction();
 
@@ -148,33 +165,51 @@ async function createInvoice(req, res) {
     }
 
     const invoice_no = await getNextInvoiceNo(conn);
-    const finalDue = due_date || computeDueDate(period_ym, req.body?.due_date_day);
+    const finalDue   = due_date || computeDueDate(period_ym, req.body?.due_date_day);
 
     const [ins] = await conn.query(
-      `INSERT INTO invoices
-         (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at, updated_at)
-       VALUES
-         (?, ?, ?, ?, ?, ?, 'unpaid', NOW(), NOW())`,
-      [invoice_no, tenant_id, t.room_id || null, period_ym, amount, finalDue]
+      `
+      INSERT INTO invoices
+        (invoice_no, tenant_id, room_id, period_ym,
+         amount, due_date, status,
+         rent_amount, water_amount, electric_amount,
+         created_at, updated_at)
+      VALUES
+        (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())
+      `,
+      [
+        invoice_no,
+        tenant_id,
+        t.room_id || null,
+        period_ym,
+        total,
+        finalDue,
+        rent,
+        water,
+        elec,
+      ]
     );
     const invoiceId = ins.insertId;
 
-    // แจ้งเตือน
-    await createNotification({
-      tenant_id,
-      type: 'invoice_created',
-      title: '📄 ใบแจ้งหนี้ใหม่',
-      body: `รอบบิล ${period_ym}\nยอดชำระ ${Number(amount || 0).toLocaleString()} บาท`,
-      created_by: req.user?.id ?? null,
-    }, conn);
+    await createNotification(
+      {
+        tenant_id,
+        type: 'invoice_created',
+        title: '📄 ใบแจ้งหนี้ใหม่',
+        body: `รอบบิล ${period_ym}\nยอดชำระ ${total.toLocaleString()} บาท`,
+        created_by: req.user?.id ?? null,
+      },
+      conn
+    );
 
     if (conn.commit) await conn.commit();
 
-    // คืนข้อมูลใบที่สร้างมาให้หน้า UI อัปเดต “ประวัติ” ได้ทันที
     const [[created]] = await conn.query(
       `SELECT
          i.id AS invoice_id, i.invoice_no, i.tenant_id, i.room_id, i.period_ym,
-         i.amount, i.status, i.due_date, i.paid_at, i.slip_url, i.created_at, i.updated_at
+         i.amount, i.status, i.due_date, i.paid_at, i.slip_url,
+         i.rent_amount, i.water_amount, i.electric_amount,
+         i.created_at, i.updated_at
        FROM invoices i WHERE i.id = ? LIMIT 1`,
       [invoiceId]
     );
@@ -188,11 +223,18 @@ async function createInvoice(req, res) {
     if (conn.release) conn.release();
   }
 }
-
 // (C) ออกบิลทั้งเดือน + แจ้งเตือนรายคน
 async function generateMonth(req, res) {
-  const { period_ym, amount_default, due_date_day } = req.body || {};
+  const { period_ym, amount_default, due_date_day, water_default, electric_default } = req.body || {};
   const month = period_ym || new Date().toISOString().slice(0, 7);
+
+  // helper แปลงเป็นตัวเลขปลอดภัย
+  const toNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const waterDef = toNum(water_default);     // ถ้าไม่ส่งมา = 0
+  const elecDef  = toNum(electric_default);  // ถ้าไม่ส่งมา = 0
 
   const conn = await getConn();
   try {
@@ -217,33 +259,64 @@ async function generateMonth(req, res) {
     }
 
     let createdCount = 0;
+
     for (const t of tenants) {
       const invoice_no = await getNextInvoiceNo(conn);
-      const amt = amount_default ?? t.price ?? 0;
+
+      // ถ้า admin ส่ง amount_default มา → ใช้เป็นค่า “ค่าเช่า”
+      // ไม่งั้นใช้ r.price จากห้อง (ถ้ามี)
+      const rent = Number.isFinite(Number(amount_default))
+        ? Number(amount_default)
+        : toNum(t.price);
+
+      const water = waterDef;   // สามารถส่งมาจาก body ได้ (ไม่ส่ง = 0)
+      const elec  = elecDef;    // สามารถส่งมาจาก body ได้ (ไม่ส่ง = 0)
+
+      const total = rent + water + elec;
+
       const due_date = computeDueDate(month, due_date_day ?? process.env.RENT_DUE_DAY);
 
+      // บันทึกยอดย่อย + ยอดรวม
       await conn.query(
-        `INSERT INTO invoices (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', NOW(), NOW())`,
-        [invoice_no, t.tenant_id, t.room_id || null, month, amt, due_date]
+        `INSERT INTO invoices
+           (invoice_no, tenant_id, room_id, period_ym,
+            amount, due_date, status,
+            rent_amount, water_amount, electric_amount,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())`,
+        [
+          invoice_no,
+          t.tenant_id,
+          t.room_id || null,
+          month,
+          total,
+          due_date,
+          rent,
+          water,
+          elec,
+        ]
       );
       createdCount++;
 
-      await createNotification({
-        tenant_id: t.tenant_id,
-        type: 'invoice_generated',
-        title: 'ออกใบแจ้งหนี้ประจำงวด',
-        body: `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${Number(amt).toLocaleString()} บาท | ครบกำหนด ${due_date}`,
-        created_by: req.user?.id ?? null,
-      }, conn);
+      // แจ้งเตือน
+      await createNotification(
+        {
+          tenant_id: t.tenant_id,
+          type: "invoice_generated",
+          title: "ออกใบแจ้งหนี้ประจำงวด",
+          body: `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${total.toLocaleString()} บาท | ครบกำหนด ${due_date}`,
+          created_by: req.user?.id ?? null,
+        },
+        conn
+      );
     }
 
     if (conn.commit) await conn.commit();
     res.json({ ok: true, created: createdCount, skipped: 0 });
   } catch (e) {
     if (conn.rollback) await conn.rollback();
-    console.error('generateMonth error:', e);
-    res.status(500).json({ error: e.message || 'Internal error' });
+    console.error("generateMonth error:", e);
+    res.status(500).json({ error: e.message || "Internal error" });
   } finally {
     if (conn.release) conn.release();
   }

@@ -4,9 +4,9 @@ import React from "react";
 /**
  * ป้ายแสดงสถานะห้อง + รองรับคลิกเพื่อจอง
  * props:
- *  - room: { status, current_tenant_user_id }
- *  - myUserId: id ผู้ใช้ปัจจุบัน
- *  - onClick: ฟังก์ชันคลิก (ถ้ามีจะแสดงเป็นปุ่ม)
+ * - room: { status, current_tenant_user_id }
+ * - myUserId: id ผู้ใช้ปัจจุบัน
+ * - onClick: ฟังก์ชันคลิก (ถ้ามีจะแสดงเป็นปุ่ม)
  */
 export default function OccupyBadge({ room = {}, myUserId = null, onClick }) {
   const status = String(room?.status || "").toLowerCase();

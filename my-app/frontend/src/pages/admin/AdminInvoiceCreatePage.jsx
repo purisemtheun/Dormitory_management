@@ -72,7 +72,19 @@ export default function AdminInvoiceCreatePage() {
   const [tenantId, setTenantId] = useState("");
   const [periodYm, setPeriodYm] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [amount, setAmount] = useState("");
+
+  // 🆕 ยอดแยก + ยอดรวม (ยอดรวมจะถูกส่งเป็น amount)
+  const [rent, setRent] = useState("");
+  const [water, setWater] = useState("");
+  const [elec, setElec] = useState("");
+
+  const total = useMemo(() => {
+    const r = Number(rent || 0);
+    const w = Number(water || 0);
+    const e = Number(elec || 0);
+    return r + w + e;
+  }, [rent, water, elec]);
+
   const [busy, setBusy] = useState(false);
 
   // ประวัติ
@@ -84,7 +96,6 @@ export default function AdminInvoiceCreatePage() {
         setLoading(true);
         setFormErr("");
         const [ts, invs] = await Promise.all([api.getTenants(), api.listInvoices(10)]);
-
         setTenants(Array.isArray(ts) ? ts.filter(t => (t.is_deleted ?? 0) === 0) : []);
 
         const sorted = [...(invs || [])].sort((a, b) => {
@@ -103,16 +114,19 @@ export default function AdminInvoiceCreatePage() {
 
   const submitOne = async (e) => {
     e.preventDefault();
-    const amt = Number(amount);
-    if (!tenantId || !periodYm || !dueDate || !amt || amt <= 0) {
-      alert("กรอกให้ครบและถูกต้อง: ผู้เช่า / เดือนงวด / กำหนดชำระ / ยอดเงิน (> 0)");
+    const amt = Number(total);
+    if (!tenantId || !periodYm || !dueDate || !(amt > 0)) {
+      alert("กรอกให้ครบและถูกต้อง: ผู้เช่า / เดือนงวด / กำหนดชำระ / ยอดรวม (> 0)");
       return;
     }
     const payload = {
       tenant_id: String(tenantId).trim(),
       period_ym: String(periodYm).trim(),
-      amount: amt,
       due_date: String(dueDate).slice(0, 10),
+      rent_amount: Number(rent || 0),
+      water_amount: Number(water || 0),
+      electric_amount: Number(elec || 0),
+      amount: amt, // ให้ backend และรายงานเดิมใช้งานได้ต่อ
     };
     try {
       setBusy(true);
@@ -120,7 +134,13 @@ export default function AdminInvoiceCreatePage() {
       await api.createInvoice(payload);
       alert("ออกใบแจ้งหนี้สำเร็จ");
 
-      setTenantId(""); setPeriodYm(""); setAmount(""); setDueDate("");
+      // reset form
+      setTenantId("");
+      setPeriodYm("");
+      setDueDate("");
+      setRent("");
+      setWater("");
+      setElec("");
 
       const invs = await api.listInvoices(10);
       const sorted = [...(invs || [])].sort((a, b) => {
@@ -148,7 +168,6 @@ export default function AdminInvoiceCreatePage() {
 
   return (
     <div className="min-h-[calc(100vh-80px)] bg-slate-50">
-      {/* 🔁 ปรับให้กว้างเท่าหน้า 'จัดการห้องพัก' */}
       <div className="max-w-7xl mx-auto px-6 sm:px-8 py-6 space-y-5">
         {/* Header Card */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 p-5 sm:p-6">
@@ -159,7 +178,7 @@ export default function AdminInvoiceCreatePage() {
             <div className="flex-1">
               <h2 className="text-2xl font-semibold text-slate-800">ออกใบแจ้งหนี้</h2>
               <p className="text-sm text-slate-500">
-                ออกใบแจ้งหนี้รายบุคคล — กำหนดเดือนงวด ยอดเงิน และวันครบกำหนดชำระ
+                ออกใบแจ้งหนี้รายบุคคล — กำหนดเดือนงวด แยกรายการ (ค่าเช่า/ค่าน้ำ/ค่าไฟ) และคำนวณยอดรวมอัตโนมัติ
               </p>
             </div>
           </div>
@@ -245,23 +264,67 @@ export default function AdminInvoiceCreatePage() {
               </div>
             </div>
 
-            {/* ยอดเงิน */}
+            {/* 🆕 ยอดแยก */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">ค่าเช่า (บาท)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  placeholder="เช่น 3000.00"
+                  value={rent}
+                  onChange={(e) => setRent(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 h-11 text-sm sm:text-base
+                             focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 outline-none
+                             disabled:bg-slate-50 disabled:text-slate-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">ค่าน้ำ (บาท)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  placeholder="เช่น 150.00"
+                  value={water}
+                  onChange={(e) => setWater(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 h-11 text-sm sm:text-base
+                             focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 outline-none
+                             disabled:bg-slate-50 disabled:text-slate-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">ค่าไฟ (บาท)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  placeholder="เช่น 450.00"
+                  value={elec}
+                  onChange={(e) => setElec(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 h-11 text-sm sm:text-base
+                             focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 outline-none
+                             disabled:bg-slate-50 disabled:text-slate-500"
+                />
+              </div>
+            </div>
+
+            {/* 🧮 ยอดรวม (อ่านอย่างเดียว) */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">ยอดเงิน (บาท)</label>
+              <label className="text-sm font-medium text-slate-700">ยอดรวม (บาท)</label>
               <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                placeholder="เช่น 3000.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                disabled={busy}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 h-11 text-sm sm:text-base
-                           focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 outline-none
-                           disabled:bg-slate-50 disabled:text-slate-500"
-                required
+                readOnly
+                value={total.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 h-11 text-base font-semibold text-slate-800"
               />
+              <p className="text-xs text-slate-500">ระบบจะบันทึกยอดรวมนี้ลงในช่อง amount ของใบแจ้งหนี้</p>
             </div>
 
             <div className="pt-1.5">
@@ -279,7 +342,6 @@ export default function AdminInvoiceCreatePage() {
 
         {/* ประวัติล่าสุด */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 overflow-hidden">
-          {/* เขียวเข้ม + ตัวอักษรขาว */}
           <div className="flex items-center gap-2 px-6 py-3.5 bg-green-600 text-white border-b border-green-900/40">
             <FileSpreadsheet size={18} className="text-white/90" />
             <span className="font-medium text-base">ประวัติออกใบแจ้งหนี้ล่าสุด</span>
@@ -294,6 +356,13 @@ export default function AdminInvoiceCreatePage() {
                 const st = statusView(r);
                 const name = tenantName.get(String(r.tenant_id)) || r.tenant_id || "-";
                 const key = r.id ?? r.invoice_id ?? r.invoice_no ?? `${r.tenant_id}-${r.period_ym}-${idx}`;
+                const showLine = (label, val) =>
+                  Number(val || 0) > 0 ? (
+                    <span className="mr-2">
+                      {label} {baht(Number(val))}
+                    </span>
+                  ) : null;
+
                 return (
                   <div key={key} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
                     <div className="flex items-start justify-between gap-3">
@@ -312,7 +381,17 @@ export default function AdminInvoiceCreatePage() {
                         <div className="text-xs text-slate-500">
                           งวด {r.period_ym || "-"} · กำหนด {toDate(r.due_date)}
                         </div>
+
+                        {/* 🧾 Breakdown ถ้ามี */}
+                        {(r.rent_amount || r.water_amount || r.electric_amount) && (
+                          <div className="text-xs text-slate-500 mt-1">
+                            {showLine("ค่าเช่า", r.rent_amount)}
+                            {showLine("ค่าน้ำ", r.water_amount)}
+                            {showLine("ค่าไฟ", r.electric_amount)}
+                          </div>
+                        )}
                       </div>
+
                       <div className="text-right">
                         <div className="text-sm font-semibold text-slate-800">
                           ฿ {baht(Number(r.amount || 0))}

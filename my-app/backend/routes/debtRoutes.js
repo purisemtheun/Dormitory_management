@@ -2,11 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const debtCtrl = require('../controllers/debtController');
+const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware');
 
-// สรุป
+router.use(verifyToken, authorizeRoles('admin','staff'));
+
+/* สรุปตัวเลขการ์ด */
 router.get('/summary', debtCtrl.getDebtSummary);
 
-// ค้นหา
+/* ตารางค้นหา */
 router.get('/search', debtCtrl.searchDebts);
 
 module.exports = router;

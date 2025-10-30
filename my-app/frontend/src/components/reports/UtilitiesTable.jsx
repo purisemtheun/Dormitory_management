@@ -1,22 +1,14 @@
 // src/components/reports/UtilitiesTable.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { reportApi } from "../../api/reports.api";
+import { Droplet, Zap } from "lucide-react";
 
+// --------- helpers ----------
 const val = (v, d = 0) => (v === null || v === undefined || v === "" ? d : v);
 const num = (v) => Number(val(v, 0)) || 0;
 
-const normalizeMode = (r) => {
-  const m = String(r.mode ?? r.billing_mode ?? "").toLowerCase();
-  if (m === "flat" || m === "package" || m === "fixed") return "flat";
-  return "meter";
-};
-
-const roomLabel = (r) => {
-  const id = r.room_id ?? r.roomId ?? r.room_code ?? r.roomCode ?? "";
-  const no = r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? "";
-  if (id && no) return `${no}`;
-  return String((r.room ?? r.room_no ?? id) || "-");
-};
+const roomLabel = (r) =>
+  String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
 
 const monthLabel = (ym) => {
   if (!ym) return "-";
@@ -26,88 +18,95 @@ const monthLabel = (ym) => {
 };
 
 export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
+  // Data/UI state
   const [rows, setRows] = useState([]);
   const [savingId, setSavingId] = useState(null);
   const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => setRows(data ?? []), [data]);
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5); // default 5 รายการ/หน้า
 
+  // --------- API method fallbacks (ชื่อยืดหยุ่น) ----------
+  const getMonthlyFn =
+    reportApi?.getMeterMonthlySimple ||
+    reportApi?.meterMonthlySimple ||
+    reportApi?.meterMonthly ||
+    reportApi?.getMeterMonthly;
+
+  const saveFn =
+    reportApi?.meterSaveSimple ||
+    reportApi?.saveMeterSimple ||
+    reportApi?.meterSaveReading;
+
+  // --------- fetch month ----------
+  const fetchMonth = useCallback(async () => {
+    if (!period || !getMonthlyFn) return;
+    try {
+      setLoading(true);
+      const res =
+        (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
+      const next = Array.isArray(res) ? res : res?.data ?? [];
+      setRows(next);
+      setPage(1); // กลับไปหน้าแรกทุกครั้งที่โหลดใหม่
+    } catch (e) {
+      console.error(e);
+      setMsg(`โหลดข้อมูลล้มเหลว: ${e?.message || "กรุณาลองอีกครั้ง"}`);
+      setTimeout(() => setMsg(""), 2200);
+    } finally {
+      setLoading(false);
+    }
+  }, [getMonthlyFn, period]);
+
+  useEffect(() => setRows(Array.isArray(data) ? data : []), [data]);
+
+  // --------- summary ----------
   const summary = useMemo(() => {
     return rows.reduce(
       (acc, r) => {
-        const mode = normalizeMode(r);
-
-        if (mode === "flat") {
-          const w = num(r.flat_water_amount ?? r.water_flat);
-          const e = num(r.flat_electric_amount ?? r.electric_flat);
-          acc.waterAmount += w;
-          acc.elecAmount += e;
-        } else {
-          const wPrev = num(r.water_prev);
-          const wCurr = num(r.water_curr);
-          const ePrev = num(r.electric_prev);
-          const eCurr = num(r.electric_curr);
-          const wUnits = Math.max(0, wCurr - wPrev);
-          const eUnits = Math.max(0, eCurr - ePrev);
-          const wAmt = wUnits * num(r.water_rate);
-          const eAmt = eUnits * num(r.electric_rate);
-          acc.waterUnits += wUnits;
-          acc.elecUnits += eUnits;
-          acc.waterAmount += wAmt;
-          acc.elecAmount += eAmt;
-        }
+        const wu = num(r.water_units);
+        const eu = num(r.electric_units);
+        const wr = num(r.water_rate);
+        const er = num(r.electric_rate);
+        acc.waterUnits += wu;
+        acc.elecUnits += eu;
+        acc.waterAmount += wu * wr;
+        acc.elecAmount += eu * er;
         return acc;
       },
       { waterUnits: 0, elecUnits: 0, waterAmount: 0, elecAmount: 0 }
     );
   }, [rows]);
 
-  const handleMonthChange = (e) => setPeriod?.(e.target.value);
-
+  // --------- local edit ----------
   const updateLocal = (id, patch) => {
     setRows((prev) => prev.map((r) => (r.room_id === id ? { ...r, ...patch } : r)));
   };
 
+  // --------- save one row ----------
   const saveRow = async (r) => {
     try {
-      const mode = normalizeMode(r);
-
-      if (
-        mode === "meter" &&
-        (num(r.water_curr) < num(r.water_prev) ||
-         num(r.electric_curr) < num(r.electric_prev))
-      ) {
-        setMsg("บันทึกล้มเหลว: เลขมิเตอร์เดือนนี้ต้องไม่ต่ำกว่าเดือนก่อน");
+      if (!saveFn) {
+        setMsg("ไม่พบเมธอด reportApi สำหรับบันทึก (meterSaveSimple)");
         setTimeout(() => setMsg(""), 2200);
         return;
       }
-
       setSavingId(r.room_id);
       setMsg("");
 
       const payload = {
         room_id: r.room_id,
         period_ym: period,
-        mode,
+        water_units: num(r.water_units),
+        electric_units: num(r.electric_units),
+        water_rate: num(r.water_rate),
+        electric_rate: num(r.electric_rate),
       };
 
-      if (mode === "flat") {
-        payload.flat_water_amount = num(r.flat_water_amount ?? r.water_flat);
-        payload.flat_electric_amount = num(r.flat_electric_amount ?? r.electric_flat);
-      } else {
-        payload.water_prev = num(r.water_prev);
-        payload.water_curr = num(r.water_curr);
-        payload.electric_prev = num(r.electric_prev);
-        payload.electric_curr = num(r.electric_curr);
-        // ถ้ามี rate ในตารางก็ส่งแนบไปด้วย (ไม่จำเป็นก็ได้)
-        payload.water_rate = num(r.water_rate);
-        payload.electric_rate = num(r.electric_rate);
-      }
+      await saveFn(payload);
+      await fetchMonth();
 
-      const res = await reportApi.meterSaveReading(payload);
-      if (res && typeof res === "object") {
-        updateLocal(r.room_id, res);
-      }
       setMsg("บันทึกแล้ว");
       setTimeout(() => setMsg(""), 1600);
     } catch (e) {
@@ -117,218 +116,280 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
     }
   };
 
-  return (
-    <div>
-      <div style={{ marginBottom: 10 }}>
-        <label>เลือกงวด (เดือน): </label>
-        <input
-          type="month"
-          value={period || ""}
-          onChange={handleMonthChange}
-          style={{ width: 180 }}
-        />
-      </div>
+  // --------- pagination calc ----------
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startIdx = (page - 1) * pageSize;
+  const pageRows = rows.slice(startIdx, startIdx + pageSize);
 
-      <div
-        style={{
-          padding: 12,
-          background: "#fff7ed",
-          border: "1px solid #fed7aa",
-          color: "#7c2d12",
-          marginBottom: 10,
-          borderRadius: 8,
-        }}
-      >
-        <div><b>สรุปยอด {monthLabel(period)}</b></div>
-        <div style={{ marginTop: 6 }}>
-          หน่วยน้ำรวม: {summary.waterUnits.toLocaleString()} หน่วย (
-          {summary.waterAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท)
-          &nbsp;&nbsp;•&nbsp;&nbsp;
-          หน่วยไฟรวม: {summary.elecUnits.toLocaleString()} หน่วย (
-          {summary.elecAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท)
+  const handleMonthChange = (e) => setPeriod?.(e.target.value);
+
+  return (
+    <div className="mx-auto w-full max-w-[1480px] space-y-6">
+      {/* Header card */}
+      <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {/* ไอคอนวงกลม */}
+            <span className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-indigo-50 border border-indigo-200">
+              <div className="flex items-center gap-1.5">
+                <Droplet className="w-5 h-5 text-sky-600" />
+                <Zap className="w-5 h-5 text-amber-500" />
+              </div>
+            </span>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">รายงานค่าน้ำ/ค่าไฟ</h2>
+              <p className="text-slate-600 text-sm mt-0.5">
+                ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • โหลดข้อมูลเดือนล่าสุด
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-slate-700">เลือกงวด:</label>
+            <input
+              type="month"
+              value={period || ""}
+              onChange={handleMonthChange}
+              className="w-[180px] rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+            />
+            <button
+              className="rounded-lg bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-60"
+              onClick={fetchMonth}
+              disabled={!period || loading}
+              title="โหลดข้อมูลล่าสุดของเดือนนี้จากเซิร์ฟเวอร์"
+            >
+              {loading ? "กำลังโหลด…" : "โหลดใหม่"}
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Summary bar */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-900 p-4">
+        <div className="font-semibold">สรุปยอด {monthLabel(period)}</div>
+        <div className="mt-1 text-sm sm:text-base">
+          หน่วยน้ำรวม: <b>{summary.waterUnits.toLocaleString()}</b> หน่วย (
+          <b>
+            {summary.waterAmount.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </b>{" "}
+          บาท)
+          <span className="px-2 text-amber-400">•</span>
+          หน่วยไฟรวม: <b>{summary.elecUnits.toLocaleString()}</b> หน่วย (
+          <b>
+            {summary.elecAmount.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </b>{" "}
+          บาท)
+        </div>
+      </div>
+
+      {/* Table card */}
+      <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+        {/* Table top controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
+          <div className="text-sm text-slate-600">
+            แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-700">แถว/หน้า</span>
+            <select
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value) || 5);
+                setPage(1);
+              }}
+            >
+              {[5, 10, 15, 20].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="sticky top-0 z-10 bg-indigo-900 text-white text-sm">
+                <th className="px-4 py-3 text-left w-16">#</th>
+                <th className="px-4 py-3 text-left w-24">ห้อง</th>
+                <th className="px-4 py-3 text-left">ผู้เช่า</th>
+
+                <th className="px-4 py-3 text-center w-32">หน่วยน้ำ</th>
+                <th className="px-4 py-3 text-center w-36">เรตน้ำ (บ./หน่วย)</th>
+                <th className="px-4 py-3 text-right w-32">ค่าน้ำ (บ.)</th>
+
+                <th className="px-4 py-3 text-center w-32">หน่วยไฟ</th>
+                <th className="px-4 py-3 text-center w-36">เรตไฟ (บ./หน่วย)</th>
+                <th className="px-4 py-3 text-right w-32">ค่าไฟ (บ.)</th>
+
+                <th className="px-4 py-3 text-right w-32">รวม (บ.)</th>
+                <th className="px-4 py-3 text-center w-24">บันทึก</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-slate-100 text-slate-800">
+              {pageRows.length ? (
+                pageRows.map((r, idx) => {
+                  const wu = num(r.water_units);
+                  const eu = num(r.electric_units);
+                  const wr = num(r.water_rate);
+                  const er = num(r.electric_rate);
+                  const wAmt = wu * wr;
+                  const eAmt = eu * er;
+                  const totalAmt = wAmt + eAmt;
+
+                  return (
+                    <tr key={r.room_id} className="hover:bg-slate-50/60 text-[15px]">
+                      <td className="px-4 py-3">{startIdx + idx + 1}</td>
+                      <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
+                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">
+                        {r.tenant_name ?? r.tenant ?? "-"}
+                      </td>
+
+                      {/* WATER UNIT */}
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1"
+                          value={r.water_units ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { water_units: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+
+                      {/* WATER RATE */}
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={r.water_rate ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { water_rate: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3 text-right font-medium">
+                        {wAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+
+                      {/* ELECTRIC UNIT */}
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1"
+                          value={r.electric_units ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { electric_units: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+
+                      {/* ELECTRIC RATE */}
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={r.electric_rate ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { electric_rate: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3 text-right font-medium">
+                        {eAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+
+                      <td className="px-4 py-3 text-right font-bold">
+                        {totalAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-60"
+                          disabled={savingId === r.room_id || loading}
+                          onClick={() => saveRow(r)}
+                        >
+                          {savingId === r.room_id ? "กำลังบันทึก…" : "บันทึก"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50"
+                  >
+                    ไม่พบข้อมูลค่าน้ำ/ค่าไฟสำหรับงวด {period || "-"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination footer */}
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
+          <div className="text-sm text-slate-600">
+            หน้า <b>{page}</b> / {totalPages}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              ก่อนหน้า
+            </button>
+            <button
+              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              ถัดไป
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Inline message */}
       {msg && (
         <div
-          style={{
-            marginBottom: 10,
-            color: msg.startsWith("บันทึกแล้ว") ? "#065f46" : "#991b1b",
-            background: msg.startsWith("บันทึกแล้ว") ? "#ecfdf5" : "#fef2f2",
-            border: `1px solid ${msg.startsWith("บันทึกแล้ว") ? "#a7f3d0" : "#fecaca"}`,
-            padding: 10,
-            borderRadius: 8,
-          }}
+          className={`rounded-xl border px-4 py-3 ${
+            msg.startsWith("บันทึกแล้ว")
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-rose-200 bg-rose-50 text-rose-900"
+          }`}
         >
           {msg}
         </div>
       )}
-
-      <div className="table-wrap" style={{ overflowX: "auto" }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>ห้อง</th>
-              <th>ผู้เช่า</th>
-
-              <th>เลขมิเตอร์น้ำ (เดือนก่อน)</th>
-              <th>เลขมิเตอร์น้ำ (เดือนนี้)</th>
-              <th>หน่วยน้ำ</th>
-              <th>ค่าน้ำ (บาท)</th>
-
-              <th>เลขมิเตอร์ไฟ (เดือนก่อน)</th>
-              <th>เลขมิเตอร์ไฟ (เดือนนี้)</th>
-              <th>หน่วยไฟ</th>
-              <th>ค่าไฟ (บาท)</th>
-
-              <th>รวม (บาท)</th>
-              <th>บันทึก</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length ? (
-              rows.map((r) => {
-                const mode = normalizeMode(r);
-
-                // ทำให้ prev/curr เป็นอินพุตเมื่อเป็น "มิเตอร์"
-                const wPrev = num(r.water_prev);
-                const wCurr = num(r.water_curr);
-                const ePrev = num(r.electric_prev);
-                const eCurr = num(r.electric_curr);
-                const wRate = num(r.water_rate) || 0;
-                const eRate = num(r.electric_rate) || 0;
-
-                const wUnits = Math.max(0, wCurr - wPrev);
-                const eUnits = Math.max(0, eCurr - ePrev);
-                const wAmount = mode === "flat"
-                  ? num(r.flat_water_amount ?? r.water_flat)
-                  : wUnits * wRate;
-                const eAmount = mode === "flat"
-                  ? num(r.flat_electric_amount ?? r.electric_flat)
-                  : eUnits * eRate;
-
-                const total = wAmount + eAmount;
-
-                const invalidWater = mode === "meter" && wCurr < wPrev;
-                const invalidElec  = mode === "meter" && eCurr < ePrev;
-
-                return (
-                  <tr key={r.room_id}>
-                    <td>{roomLabel(r)}</td>
-                    <td>{r.tenant_name ?? r.tenant ?? "-"}</td>
-
-                    {/* WATER PREV */}
-                    <td>
-                      {mode === "flat" ? "-" : (
-                        <input
-                          type="number"
-                          step="1"
-                          value={r.water_prev ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { water_prev: e.target.value })
-                          }
-                          style={{ width: 110 }}
-                        />
-                      )}
-                    </td>
-
-                    {/* WATER CURR */}
-                    <td>
-                      {mode === "flat" ? "-" : (
-                        <input
-                          type="number"
-                          step="1"
-                          value={r.water_curr ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { water_curr: e.target.value })
-                          }
-                          style={{
-                            width: 110,
-                            borderColor: invalidWater ? "#dc2626" : undefined,
-                          }}
-                          title={invalidWater ? "เลขเดือนนี้ต้องมากกว่าหรือเท่ากับเดือนก่อน" : ""}
-                        />
-                      )}
-                    </td>
-
-                    <td className="num">{mode === "flat" ? "-" : wUnits}</td>
-                    <td className="num">
-                      {wAmount.toLocaleString(undefined, {
-                        minimumFractionDigits: 2, maximumFractionDigits: 2,
-                      })}
-                    </td>
-
-                    {/* ELEC PREV */}
-                    <td>
-                      {mode === "flat" ? "-" : (
-                        <input
-                          type="number"
-                          step="1"
-                          value={r.electric_prev ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { electric_prev: e.target.value })
-                          }
-                          style={{ width: 110 }}
-                        />
-                      )}
-                    </td>
-
-                    {/* ELEC CURR */}
-                    <td>
-                      {mode === "flat" ? "-" : (
-                        <input
-                          type="number"
-                          step="1"
-                          value={r.electric_curr ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { electric_curr: e.target.value })
-                          }
-                          style={{
-                            width: 110,
-                            borderColor: invalidElec ? "#dc2626" : undefined,
-                          }}
-                          title={invalidElec ? "เลขเดือนนี้ต้องมากกว่าหรือเท่ากับเดือนก่อน" : ""}
-                        />
-                      )}
-                    </td>
-
-                    <td className="num">{mode === "flat" ? "-" : eUnits}</td>
-                    <td className="num">
-                      {eAmount.toLocaleString(undefined, {
-                        minimumFractionDigits: 2, maximumFractionDigits: 2,
-                      })}
-                    </td>
-
-                    <td className="num">
-                      <b>
-                        {total.toLocaleString(undefined, {
-                          minimumFractionDigits: 2, maximumFractionDigits: 2,
-                        })}
-                      </b>
-                    </td>
-
-                    <td>
-                      <button
-                        className="btn btn-primary"
-                        disabled={savingId === r.room_id}
-                        onClick={() => saveRow(r)}
-                      >
-                        {savingId === r.room_id ? "กำลังบันทึก…" : "บันทึก"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan={12} style={{ textAlign: "center", padding: 20 }}>
-                  ไม่พบข้อมูลค่าน้ำ/ค่าไฟสำหรับงวด {period || "-"}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

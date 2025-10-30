@@ -10,6 +10,17 @@ import RevenueDailyChart from "../../components/reports/RevenueDailyChart";
 import DebtsTable from "../../components/reports/DebtsTable";
 import UtilitiesTable from "../../components/reports/UtilitiesTable";
 
+// icons (สอดคล้องกับธีม roomstatus)
+import {
+  ClipboardList,
+  Home,
+  BarChart3,
+  CalendarDays,
+  CreditCard,
+  AlertCircle,
+  Droplets,
+} from "lucide-react";
+
 // helpers
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const ymStr = () => new Date().toISOString().slice(0, 7);
@@ -97,119 +108,116 @@ export default function AdminReportsPage() {
     };
   }, [activeTab, months, dateRange, asOf, paymentRange, utilityPeriod]);
 
-  /** Tab button (ไม่มีแอนิเมชันเลื่อน, hover แค่เข้มขึ้น) */
-  const TabBtn = ({ id, children }) => {
+  /** Tab pill (ธีมเดียวกับ Pill ในหน้า roomstatus) */
+  const TabBtn = ({ id, icon, children }) => {
     const isActive = activeTab === id;
     return (
       <button
         type="button"
+        role="tab"
+        aria-selected={isActive}
+        aria-controls={`panel-${id}`}
         onClick={() => setActiveTab(id)}
-        aria-pressed={isActive}
-        style={{
-          padding: "10px 14px",
-          borderRadius: 8,
-          border: `1px solid ${isActive ? "#1d4ed8" : "#d1d5db"}`,
-          background: isActive ? "#1d4ed8" : "#ffffff",
-          color: isActive ? "#ffffff" : "#111827",
-          fontWeight: 600,
-          cursor: "pointer",
-          transition: "none", // ไม่มี animation
-        }}
-        onMouseEnter={(e) => {
-          if (!isActive) e.currentTarget.style.background = "#f3f4f6";
-        }}
-        onMouseLeave={(e) => {
-          if (!isActive) e.currentTarget.style.background = "#ffffff";
-        }}
+        data-active={isActive || undefined}
+        className={[
+          "inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium transition",
+          "bg-white hover:shadow-md",
+          "border-slate-300 text-slate-800",
+          "focus:outline-none focus:ring-2 focus:ring-indigo-500",
+          // active styles (match Pill: bg indigo / text white / border indigo)
+          "data-[active=true]:bg-indigo-600 data-[active=true]:text-white data-[active=true]:border-indigo-600",
+        ].join(" ")}
       >
-        {children}
+        {icon}
+        <span>{children}</span>
       </button>
     );
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2 style={{ margin: "0 0 12px" }}>รายงานภาพรวม</h2>
+    <div className="p-5 sm:p-6 lg:p-8 space-y-4">
+      {/* Header – โทนเดียวกับ RoomsStatusTable */}
+      <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
+        <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
+              <ClipboardList className="w-6 h-6 text-indigo-700" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">รายงานภาพรวม</h2>
+              <p className="text-slate-600 text-sm mt-0.5">
+                สถานะห้อง • รายรับ • หนี้ค้าง • การชำระเงิน • ค่าน้ำ/ไฟ
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 16,
-          boxShadow: "0 6px 18px rgba(0,0,0,.04)",
-          background: "#fff",
-        }}
-      >
-        {/* Tabs */}
-        <nav style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-          <TabBtn id="rooms">สถานะห้อง</TabBtn>
-          <TabBtn id="revenue-monthly">รายรับรายเดือน</TabBtn>
-          <TabBtn id="revenue-daily">รายรับรายวัน</TabBtn>
-          <TabBtn id="debts">หนี้ค้างชำระ</TabBtn>
-          <TabBtn id="payments">การชำระเงิน</TabBtn>
-          <TabBtn id="utilities">ค่าน้ำ/ค่าไฟ</TabBtn>
+      {/* Card หลัก */}
+      <section className="border border-slate-200 rounded-2xl bg-white shadow-sm">
+        {/* Tabs (pill group) */}
+        <nav
+          role="tablist"
+          className="flex flex-wrap gap-2 p-4 border-b border-slate-200"
+        >
+          <TabBtn id="rooms" icon={<Home className="w-4 h-4" />}>สถานะห้อง</TabBtn>
+          <TabBtn id="revenue-monthly" icon={<BarChart3 className="w-4 h-4" />}>รายรับรายเดือน</TabBtn>
+          <TabBtn id="revenue-daily" icon={<CalendarDays className="w-4 h-4" />}>รายรับรายวัน</TabBtn>
+          <TabBtn id="debts" icon={<AlertCircle className="w-4 h-4" />}>หนี้ค้างชำระ</TabBtn>
+          <TabBtn id="payments" icon={<CreditCard className="w-4 h-4" />}>การชำระเงิน</TabBtn>
+          <TabBtn id="utilities" icon={<Droplets className="w-4 h-4" />}>ค่าน้ำ/ค่าไฟ</TabBtn>
         </nav>
 
         {/* Body */}
-        {loading ? (
-          <div style={{ padding: 18, textAlign: "center" }}>กำลังโหลด…</div>
-        ) : err ? (
-          <div
-            style={{
-              color: "#b91c1c",
-              background: "#fef2f2",
-              border: "1px solid #fecaca",
-              padding: 12,
-              borderRadius: 8,
-            }}
-          >
-            {err}
-          </div>
-        ) : (
-          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}>
-            {activeTab === "rooms" && <RoomsStatusTable data={roomsStatus} />}
+        <div className="p-4">
+          {loading ? (
+            <div className="py-8 text-center text-slate-600">กำลังโหลด…</div>
+          ) : err ? (
+            <div className="text-sm rounded-lg px-4 py-3 border border-red-200 text-red-800 bg-red-50">
+              {err}
+            </div>
+          ) : (
+            <div className="pt-3" id={`panel-${activeTab}`} role="tabpanel">
+              {activeTab === "rooms" && <RoomsStatusTable data={roomsStatus} />}
 
-            {activeTab === "revenue-monthly" && (
-              <RevenueMonthlyChart
-                data={revenueMonthly}
-                months={months}
-                setMonths={setMonths}
-              />
-            )}
+              {activeTab === "revenue-monthly" && (
+                <RevenueMonthlyChart
+                  data={revenueMonthly}
+                  months={months}
+                  setMonths={setMonths}
+                />
+              )}
 
-            {activeTab === "revenue-daily" && (
-              <RevenueDailyChart
-                data={revenueDaily}
-                range={dateRange}
-                setRange={setDateRange}
-              />
-            )}
+              {activeTab === "revenue-daily" && (
+                <RevenueDailyChart
+                  data={revenueDaily}
+                  range={dateRange}
+                  setRange={setDateRange}
+                />
+              )}
 
-            {activeTab === "debts" && (
-              <DebtsTable
-                data={debts}
-                asOf={asOf}
-                setAsOf={setAsOf}
-              />
-            )}
+              {activeTab === "debts" && (
+                <DebtsTable data={debts} asOf={asOf} setAsOf={setAsOf} />
+              )}
 
-            {activeTab === "payments" && (
-              <PaymentsTable
-                data={payments}
-                range={paymentRange}
-                setRange={setPaymentRange}
-              />
-            )}
+              {activeTab === "payments" && (
+                <PaymentsTable
+                  data={payments}
+                  range={paymentRange}
+                  setRange={setPaymentRange}
+                />
+              )}
 
-            {activeTab === "utilities" && (
-              <UtilitiesTable
-                data={utilities}
-                period={utilityPeriod}
-                setPeriod={setUtilityPeriod}
-              />
-            )}
-          </div>
-        )}
+              {activeTab === "utilities" && (
+                <UtilitiesTable
+                  data={utilities}
+                  period={utilityPeriod}
+                  setPeriod={setUtilityPeriod}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

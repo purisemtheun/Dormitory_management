@@ -5,7 +5,7 @@
 
 const path = require('path');
 const db = require('../config/db');
-const { createNotification } = require('../services/notification'); // ✅ เพิ่มสำหรับแจ้ง LINE
+const { createNotification } = require('../services/notification');
 
 /* ------------------------------------------------------------------ */
 /* Helper: หา tenant_id ของ user ปัจจุบัน                              */
@@ -98,7 +98,7 @@ async function recalcTenantDebt(conn, tenantId) {
 
 /**
  * GET /api/payments/my-invoices?limit=3  (ต้องมี token)
- * ➜ เพิ่ม invoice_no ให้ frontend ใช้เลือก Dxxxx ได้
+ * ➜ คืนค่าเช่า/น้ำ/ไฟ + effective_status (pending เมื่อมีสลิป, overdue เมื่อเกินกำหนด)
  */
 async function getMyLastInvoices(req, res) {
   try {
@@ -114,25 +114,29 @@ async function getMyLastInvoices(req, res) {
     const [rows] = await db.query(
       `
       SELECT
-         id           AS invoice_id,
-         invoice_no,                          -- ⬅ เพิ่ม
+         id             AS invoice_id,
+         invoice_no,
          tenant_id,
          room_id,
          period_ym,
          amount,
+         rent_amount,          -- ✅ ค่าเช่า
+         water_amount,         -- ✅ ค่าน้ำ
+         electric_amount,      -- ✅ ค่าไฟ
          status,
          due_date,
          paid_at,
          slip_url,
+         created_at,
+         updated_at,
          CASE
-           WHEN status <> 'paid'
-                AND due_date IS NOT NULL
-                AND CURDATE() > due_date THEN 'overdue'
+           WHEN status <> 'paid' AND slip_url IS NOT NULL THEN 'pending'
+           WHEN status <> 'paid' AND due_date IS NOT NULL AND CURDATE() > due_date THEN 'overdue'
            ELSE status
          END AS effective_status
        FROM invoices
        WHERE tenant_id = ?
-       ORDER BY period_ym DESC, id DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT ?`,
       [tenantId, limit]
     );
@@ -190,7 +194,7 @@ async function submitPayment(req, res) {
     const tenantId = await getTenantIdByUser(userId);
     if (!tenantId) return res.status(400).json({ error: 'ไม่พบ tenant ของผู้ใช้' });
 
-    // ✅ ตรวจสอบจาก invoice_no ก่อน ถ้าไม่มี fallback เป็น id
+    // ตรวจสอบจาก invoice_no ก่อน ถ้าไม่มี fallback เป็น id
     const [[inv]] = await db.query(
       `
       SELECT id, invoice_no, tenant_id, amount, status
@@ -248,10 +252,9 @@ async function submitPayment(req, res) {
   }
 }
 
-
 /**
  * PATCH /api/admin/payments/:id/approve
- * ✅ เสียบแจ้ง LINE อัตโนมัติผ่าน createNotification ภายในทรานแซกชัน
+ * ✅ แจ้ง LINE ผ่าน createNotification (ถ้าตั้งค่าไว้)
  */
 async function approvePayment(req, res) {
   const paymentId = req.params.id;
@@ -309,7 +312,7 @@ async function approvePayment(req, res) {
       await recalcTenantDebt(conn, invTenant.tenant_id);
     }
 
-    /* ---------- 🔔 แจ้ง LINE: payment_approved ---------- */
+    // 🔔 แจ้ง LINE: payment_approved
     const [[info]] = await conn.query(
       `SELECT i.tenant_id, i.period_ym, i.invoice_no, p.amount
          FROM payments p
@@ -327,7 +330,6 @@ async function approvePayment(req, res) {
         created_by: req.user?.id ?? null,
       }, conn);
     }
-    /* ---------------------------------------------------- */
 
     if (conn.commit) await conn.commit();
     return res.json({ ok: true });
@@ -342,7 +344,7 @@ async function approvePayment(req, res) {
 
 /**
  * PATCH /api/admin/payments/:id/reject
- * ✅ เสียบแจ้ง LINE: payment_rejected
+ * ✅ แจ้ง LINE: payment_rejected
  */
 async function rejectPayment(req, res) {
   const paymentId = req.params.id;
@@ -385,7 +387,7 @@ async function rejectPayment(req, res) {
       await recalcTenantDebt(conn, invTenant.tenant_id);
     }
 
-    /* ---------- 🔔 แจ้ง LINE: payment_rejected ---------- */
+    // 🔔 แจ้ง LINE: payment_rejected
     const [[info]] = await conn.query(
       `SELECT i.tenant_id, i.invoice_no
          FROM payments p
@@ -403,7 +405,6 @@ async function rejectPayment(req, res) {
         created_by: req.user?.id ?? null,
       }, conn);
     }
-    /* --------------------------------------------------- */
 
     if (conn.commit) await conn.commit();
     return res.json({ ok: true });
