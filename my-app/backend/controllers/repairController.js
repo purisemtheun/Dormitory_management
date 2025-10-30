@@ -1,9 +1,10 @@
+// controllers/repairController.js
 const db = require("../config/db");
 const STATUS = require("./repairStatus");
-const { pushLineAfterNotification } = require('../services/notifyAfterInsert');
+const { pushLineAfterNotification } = require("../services/notifyAfterInsert");
 
 /* ======================================================
- * 1) สร้างใบแจ้งซ่อม
+ * 1) สร้างใบแจ้งซ่อม (รองรับ due_date)
  * ====================================================== */
 exports.createRepair = async (req, res) => {
   try {
@@ -11,9 +12,10 @@ exports.createRepair = async (req, res) => {
     const role = req.user?.role;
     if (!userId) return res.status(401).json({ message: "ยังไม่ได้เข้าสู่ระบบ" });
 
-    const { room_id, title, description, image_url } = req.body || {};
-    if (!title || !description)
+    const { room_id, title, description, image_url, due_date, deadline } = req.body || {};
+    if (!title || !description) {
       return res.status(400).json({ message: "กรุณาระบุเรื่องและรายละเอียดการแจ้งซ่อม" });
+    }
 
     let tenant_id = null;
     let tenant_room_id = null;
@@ -39,12 +41,17 @@ exports.createRepair = async (req, res) => {
 
     const effectiveRoomId = room_id || tenant_room_id || null;
 
+    // YYYY-MM-DD หรือ null (รองรับชื่อ deadline จากฟอร์มเก่า)
+    const rawDue = due_date || deadline || null;
+    const dueDateVal =
+      typeof rawDue === "string" && /^\d{4}-\d{2}-\d{2}/.test(rawDue) ? rawDue : null;
+
     await db.query(
       `INSERT INTO repairs
-         (room_id, tenant_id, title, description, image_url, status, created_at, updated_at)
+         (room_id, tenant_id, title, description, image_url, due_date, status, created_at, updated_at)
        VALUES
-         (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [effectiveRoomId, tenant_id, title, description, finalImageUrl, STATUS.NEW]
+         (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [effectiveRoomId, tenant_id, title, description, finalImageUrl, dueDateVal, STATUS.NEW]
     );
 
     res.status(201).json({ message: "สร้างใบแจ้งซ่อมสำเร็จ" });
@@ -89,7 +96,7 @@ exports.getAllRepairs = async (req, res) => {
     sql += " ORDER BY r.created_at DESC";
 
     const [rows] = await db.query(sql, params);
-    const out = rows.map(r => ({ ...r, status: String(r.status || '').toLowerCase() }));
+    const out = rows.map((r) => ({ ...r, status: String(r.status || "").toLowerCase() }));
     res.json(out);
   } catch (err) {
     console.error("❌ getAllRepairs error:", err);
@@ -102,7 +109,7 @@ exports.getAllRepairs = async (req, res) => {
  * ====================================================== */
 exports.getRepairById = async (req, res) => {
   try {
-    const { id } = req.params; // repair_id
+    const { id } = req.params;
     const [rows] = await db.query(
       `
       SELECT 
@@ -131,18 +138,22 @@ exports.getRepairById = async (req, res) => {
 };
 
 /* ======================================================
- * 4) อัปเดตข้อมูลงาน
+ * 4) อัปเดตข้อมูลงาน (รองรับ due_date)
  * ====================================================== */
 exports.updateRepair = async (req, res) => {
   try {
-    const { id } = req.params; // repair_id
-    const { title, description, image_url, room_id } = req.body;
+    const { id } = req.params;
+    const { title, description, image_url, room_id, due_date, deadline } = req.body;
+
+    const rawDue = due_date || deadline || null;
+    const dueDateVal =
+      typeof rawDue === "string" && /^\d{4}-\d{2}-\d{2}/.test(rawDue) ? rawDue : null;
 
     await db.query(
       `UPDATE repairs
-         SET title = ?, description = ?, image_url = ?, room_id = ?, updated_at = NOW()
+         SET title = ?, description = ?, image_url = ?, room_id = ?, due_date = ?, updated_at = NOW()
        WHERE repair_id = ?`,
-      [title, description, image_url || null, room_id || null, id]
+      [title, description, image_url || null, room_id || null, dueDateVal, id]
     );
 
     res.json({ message: "อัปเดตข้อมูลงานซ่อมสำเร็จ" });
@@ -153,16 +164,28 @@ exports.updateRepair = async (req, res) => {
 };
 
 /* ======================================================
- * 5) ลบงาน (admin)
+ * 5) ลบงาน (admin/manager/staff)
+ *    - ถ้าติด FK จะเปลี่ยนเป็น cancelled แทน (กัน 500)
  * ====================================================== */
 exports.deleteRepair = async (req, res) => {
   try {
-    const { id } = req.params; // repair_id
+    const { id } = req.params;
+
     await db.query("DELETE FROM repairs WHERE repair_id = ?", [id]);
-    res.json({ message: "ลบงานซ่อมเรียบร้อยแล้ว" });
+
+    return res.json({ message: "ลบงานซ่อมเรียบร้อยแล้ว" });
   } catch (err) {
+    if (err?.code === "ER_ROW_IS_REFERENCED_2" || err?.errno === 1451) {
+      await db.query(
+        "UPDATE repairs SET status = ?, updated_at = NOW() WHERE repair_id = ?",
+        [STATUS.CANCELLED ?? "cancelled", req.params.id]
+      );
+      return res
+        .status(200)
+        .json({ message: "งานถูกยกเลิกแทนการลบ (มีการอ้างอิงอยู่)" });
+    }
     console.error("❌ deleteRepair error:", err);
-    res.status(500).json({ message: "ไม่สามารถลบงานซ่อมได้" });
+    return res.status(500).json({ message: "ไม่สามารถลบงานซ่อมได้" });
   }
 };
 
@@ -171,17 +194,15 @@ exports.deleteRepair = async (req, res) => {
  * ====================================================== */
 exports.listTechnicians = async (_req, res) => {
   try {
-    const [rows] = await db.query(`
-      SELECT 
-        id,
-        COALESCE(NULLIF(fullname,''), NULLIF(name,''), LEFT(email, LOCATE('@', email) - 1), CONCAT('Tech#', id)) AS name,
-        email
-      FROM users
-      WHERE role = 'technician'
-        AND (status IS NULL OR LOWER(status) IN ('active','1','true'))
-      ORDER BY name ASC, id ASC
-    `);
-    const out = rows.map(r => ({ id: r.id, name: r.name, email: r.email }));
+    const [rows] = await db.query(
+      `SELECT id,
+              COALESCE(NULLIF(fullname,''), NULLIF(name,''), LEFT(email, LOCATE('@', email) - 1), CONCAT('Tech#', id)) AS name,
+              email
+         FROM users
+        WHERE role IN ('technician','tech')
+        ORDER BY name ASC, id ASC`
+    );
+    const out = rows.map((r) => ({ id: r.id, name: r.name, email: r.email }));
     res.json(out);
   } catch (err) {
     console.error("❌ listTechnicians error:", err);
@@ -190,11 +211,11 @@ exports.listTechnicians = async (_req, res) => {
 };
 
 /* ======================================================
- * 7) มอบหมายงาน (admin/manager)
+ * 7) มอบหมายงาน (admin/manager/staff)
  * ====================================================== */
 exports.assignRepair = async (req, res) => {
   try {
-    const { id } = req.params; // repair_id
+    const { id } = req.params;
     const techId = req.body.assigned_to ?? req.body.technician_id;
     if (!techId) return res.status(400).json({ error: "ต้องระบุ assigned_to" });
 
@@ -216,13 +237,18 @@ exports.assignRepair = async (req, res) => {
 };
 
 /* ======================================================
- * 8) แอดมินเปลี่ยนสถานะ (สำหรับ rejected ฯลฯ)
+ * 8) แอดมินเปลี่ยนสถานะ (rejected/cancelled/new/assigned)
  * ====================================================== */
 exports.adminSetStatus = async (req, res) => {
   try {
-    const { id } = req.params;        // repair_id
+    const { id } = req.params;
     const { status } = req.body || {};
-    const allowed = new Set([STATUS.REJECTED, STATUS.CANCELLED, STATUS.NEW, STATUS.ASSIGNED]);
+    const allowed = new Set([
+      STATUS.REJECTED,
+      STATUS.CANCELLED,
+      STATUS.NEW,
+      STATUS.ASSIGNED,
+    ]);
     if (!allowed.has(status)) {
       return res.status(400).json({ message: "สถานะไม่ถูกต้อง" });
     }
@@ -247,16 +273,16 @@ exports.techSetStatus = async (req, res) => {
     const techId = req.user.id;
     const { action, status } = req.body || {};
 
-    const want =
-      action === "start" || String(status || "").toLowerCase() === "in_progress"
-        ? "in_progress"
-        : action === "complete" || String(status || "").toLowerCase() === "done"
-        ? "done"
-        : null;
+    // map action/status → constant
+    let wantStatus = null;
+    if (action === "start" || String(status || "").toLowerCase() === "in_progress") {
+      wantStatus = STATUS.IN_PROGRESS ?? "in_progress";
+    } else if (action === "complete" || String(status || "").toLowerCase() === "done") {
+      wantStatus = STATUS.DONE ?? "done";
+    }
+    if (!wantStatus) return res.status(400).json({ error: "action ต้องเป็น start หรือ complete" });
 
-    if (!want) return res.status(400).json({ error: "action ต้องเป็น start หรือ complete" });
-
-    // ตรวจสิทธิ์เจ้าของงานสำหรับช่าง
+    // ตรวจสิทธิ์เจ้าของงาน
     const [own] = await db.query(
       `SELECT status
          FROM repairs
@@ -265,39 +291,51 @@ exports.techSetStatus = async (req, res) => {
         LIMIT 1`,
       [repairId, techId]
     );
-    if (!own.length) {
-      return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้ หรือไม่พบนายซ่อม" });
+    if (!own.length) return res.status(403).json({ error: "คุณไม่ได้รับมอบหมายงานนี้ หรือไม่พบนายซ่อม" });
+
+    const currentRaw = own[0].status;
+    const curStr = String(currentRaw || "").toUpperCase();
+    const assignedStr = String(STATUS.ASSIGNED ?? "assigned").toUpperCase();
+    const inProgressStr = String(STATUS.IN_PROGRESS ?? "in_progress").toUpperCase();
+
+    if (wantStatus === (STATUS.IN_PROGRESS ?? "in_progress") && curStr !== assignedStr) {
+      return res
+        .status(409)
+        .json({ error: `สถานะปัจจุบันคือ '${String(currentRaw)}' (ต้องเป็น '${STATUS.ASSIGNED}')` });
     }
-    const current = String(own[0].status || "").toLowerCase();
-    if (want === "in_progress" && current !== "assigned") {
-      return res.status(409).json({ error: `สถานะปัจจุบันคือ '${current}' (ต้องเป็น 'assigned')` });
-    }
-    if (want === "done" && current !== "in_progress") {
-      return res.status(409).json({ error: `สถานะปัจจุบันคือ '${current}' (ต้องเป็น 'in_progress')` });
+    if (wantStatus === (STATUS.DONE ?? "done") && curStr !== inProgressStr) {
+      return res
+        .status(409)
+        .json({ error: `สถานะปัจจุบันคือ '${String(currentRaw)}' (ต้องเป็น '${STATUS.IN_PROGRESS}')` });
     }
 
     await db.query(
       `UPDATE repairs
           SET status = ?,
-              started_at   = IF(? = 'in_progress', NOW(), started_at),
-              completed_at = IF(? = 'done',        NOW(), completed_at),
+              started_at   = IF(? = ?, NOW(), started_at),
+              completed_at = IF(? = ?, NOW(), completed_at),
               updated_at   = NOW()
         WHERE repair_id = ?`,
-      [want, want, want, repairId]
+      [
+        wantStatus,
+        wantStatus, STATUS.IN_PROGRESS ?? "in_progress",
+        wantStatus, STATUS.DONE ?? "done",
+        repairId,
+      ]
     );
 
     // แจ้งเตือนเมื่อเสร็จสิ้น
-    if (want === 'done') {
+    if (wantStatus === (STATUS.DONE ?? "done")) {
       const [[info]] = await db.query(
         `SELECT tenant_id, room_id, title FROM repairs WHERE repair_id = ? LIMIT 1`,
         [repairId]
       );
       if (info?.tenant_id) {
-        const type  = 'repair_updated'; // ใช้ชนิดที่มีใน ENUM แล้ว
-        const title = 'งานซ่อมเสร็จแล้ว';
-        const body  = info.title
-          ? `งาน "${info.title}" (${info.room_id || '-'}) เสร็จสิ้นเรียบร้อย`
-          : `งานซ่อม (${info.room_id || '-'}) เสร็จสิ้นเรียบร้อย`;
+        const type = "repair_updated";
+        const title = "งานซ่อมเสร็จแล้ว";
+        const body = info.title
+          ? `งาน "${info.title}" (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`
+          : `งานซ่อม (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`;
 
         await db.query(
           `INSERT INTO notifications
@@ -308,12 +346,15 @@ exports.techSetStatus = async (req, res) => {
         );
 
         await pushLineAfterNotification(null, {
-          tenant_id: info.tenant_id, type, title, body
+          tenant_id: info.tenant_id,
+          type,
+          title,
+          body,
         });
       }
     }
 
-    return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: want });
+    return res.json({ message: "อัปเดตสถานะสำเร็จ", repair_id: repairId, status: wantStatus });
   } catch (err) {
     console.error("🔥 [techSetStatus] error:", err);
     return res.status(500).json({ error: "เกิดข้อผิดพลาดในการอัปเดตสถานะ" });

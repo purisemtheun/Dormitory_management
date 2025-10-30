@@ -1,18 +1,15 @@
-// backend/routes/repairRoutes.js
+// routes/repairs.routes.js
 const express = require("express");
 const router = express.Router();
 
 const repair = require("../controllers/repairController");
-const admin = require("../controllers/adminRepairController"); // ถ้ามี
-const tech = require("../controllers/techRepairController");   // ถ้ามี
-
 const { verifyToken, authorizeRoles } = require("../middlewares/authMiddleware");
 
 /* ======================================================
- * /api/repairs
+ * Base path: /api/repairs
  * ====================================================== */
 
-/* ---------- กลุ่ม "ช่าง" ต้องวางก่อน dynamic /:id ---------- */
+/* ---------- Technicians (วางก่อน /:id) ---------- */
 router.get(
   "/tech",
   verifyToken,
@@ -34,19 +31,17 @@ router.patch(
   repair.techSetStatus
 );
 
-/* ---------- สร้าง/อ่านรวม ---------- */
-// สร้างใบแจ้งซ่อม
+/* ---------- Create / Read (role จะถูกกรองใน controller) ---------- */
 router.post(
   "/",
   verifyToken,
-  authorizeRoles("tenant", "admin", "manager"),
+  authorizeRoles("tenant", "admin", "manager", "staff"),
   repair.createRepair
 );
 
-// ดึงรายการทั้งหมด (ระบบจะกรองตาม role ภายใน controller)
 router.get("/", verifyToken, repair.getAllRepairs);
 
-/* ---------- รายชื่อช่างสำหรับ dropdown ---------- */
+/* ---------- Technicians list for dropdown ---------- */
 router.get(
   "/technicians",
   verifyToken,
@@ -54,35 +49,31 @@ router.get(
   repair.listTechnicians
 );
 
-/* ---------- มอบหมาย/เปลี่ยนสถานะ (ฝั่งแอดมิน) ---------- */
-// มอบหมายงานให้ช่าง
+/* ---------- Assign / Admin status ---------- */
 router.patch(
   "/:id/assign",
   verifyToken,
-  authorizeRoles("admin", "manager"),
+  authorizeRoles("admin", "manager", "staff"),
   repair.assignRepair
 );
 
-// แอดมินเปลี่ยนสถานะ (เช่น ปฏิเสธ)
 router.patch(
   "/:id/status",
   verifyToken,
-  authorizeRoles("admin", "manager"),
+  authorizeRoles("admin", "manager", "staff"),
   repair.adminSetStatus
 );
 
-/* ---------- เส้นทาง dynamic /:id วางท้ายสุด ---------- */
-// รายการทีละงาน
+/* ---------- Dynamic /:id (วางท้ายสุด) ---------- */
 router.get("/:id", verifyToken, repair.getRepairById);
 
-// แก้ไขงาน
 router.patch("/:id", verifyToken, repair.updateRepair);
 
-// ลบงาน (admin)
+/* ✅ Delete (เปิดใช้งานจริง) */
 router.delete(
   "/:id",
   verifyToken,
-  authorizeRoles("admin"),
+  authorizeRoles("admin", "manager", "staff"),
   repair.deleteRepair
 );
 

@@ -1,4 +1,4 @@
-// backend/controllers/invoiceController.js
+// backend/controllers/adminController.js  (invoice-related handlers)
 const db = require('../config/db');
 const { createNotification } = require('../services/notification');
 
@@ -12,7 +12,18 @@ async function getConn() {
   return typeof db.getConnection === 'function' ? await db.getConnection() : db;
 }
 
+// ปรับให้ self-init ตาราง/แถว counter และเพิ่มเลขแบบ atomic
 async function getNextInvoiceNo(conn) {
+  // สร้างตารางถ้ายังไม่มี
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS invoice_counter (
+      id TINYINT PRIMARY KEY,
+      last_no INT NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB
+  `);
+  // ใส่แถว default ถ้ายังไม่มี
+  await conn.query(`INSERT IGNORE INTO invoice_counter (id, last_no) VALUES (1, 0)`);
+  // เพิ่มเลข
   await conn.query(`UPDATE invoice_counter SET last_no = last_no + 1 WHERE id = 1`);
   const [[{ last_no }]] = await conn.query(`SELECT last_no FROM invoice_counter WHERE id = 1`);
   return `D${String(last_no).padStart(4, '0')}`;
@@ -34,6 +45,47 @@ function computeDueDate(periodYm, dueDateDay) {
 
 /* ====== Endpoints ====== */
 
+// GET /api/admin/invoices?limit=10
+async function listRecentInvoices(req, res) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '10', 10), 50);
+
+    const [rows] = await db.query(`
+      SELECT
+        i.id            AS invoice_id,
+        i.invoice_no,
+        i.tenant_id,
+        i.room_id,
+        i.period_ym,
+        i.amount,
+        i.status,
+        i.due_date,
+        i.paid_at,
+        i.slip_url,
+        i.created_at,
+        i.updated_at,
+        COALESCE(u.fullname, u.name, u.email, CONCAT('Tenant#', i.tenant_id)) AS tenant_name
+      FROM invoices i
+      LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
+      LEFT JOIN users   u ON u.id       = t.user_id
+      ORDER BY i.created_at DESC, i.id DESC
+      LIMIT ?
+    `, [limit]);
+
+    // เติม absolute url ของสลิป (ถ้ามี)
+    const data = rows.map(r => {
+      const p = r.slip_url || null;
+      const abs = p ? `${PUBLIC_BASE_URL}${encodeURI(p)}` : null;
+      return { ...r, slip_abs: abs };
+    });
+
+    res.json(data);
+  } catch (e) {
+    console.error('listRecentInvoices error:', e);
+    res.status(500).json({ error: e.message || 'Internal error' });
+  }
+}
+
 // (A) บิลรออนุมัติ/ตรวจสลิป
 async function getPendingInvoices(_req, res) {
   try {
@@ -49,7 +101,7 @@ async function getPendingInvoices(_req, res) {
         i.due_date,
         i.paid_at,
         i.slip_url,
-        COALESCE(u.fullname, CONCAT('Tenant#', i.tenant_id)) AS tenant_name
+        COALESCE(u.fullname, u.name, u.email, CONCAT('Tenant#', i.tenant_id)) AS tenant_name
       FROM invoices i
       LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
       LEFT JOIN users   u ON u.id       = t.user_id
@@ -100,14 +152,14 @@ async function createInvoice(req, res) {
 
     const [ins] = await conn.query(
       `INSERT INTO invoices
-         (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at)
+         (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at, updated_at)
        VALUES
-         (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
+         (?, ?, ?, ?, ?, ?, 'unpaid', NOW(), NOW())`,
       [invoice_no, tenant_id, t.room_id || null, period_ym, amount, finalDue]
     );
     const invoiceId = ins.insertId;
 
-    // ✅ แจ้งเตือน (อยู่ในทรานแซกชัน)
+    // แจ้งเตือน
     await createNotification({
       tenant_id,
       type: 'invoice_created',
@@ -117,7 +169,17 @@ async function createInvoice(req, res) {
     }, conn);
 
     if (conn.commit) await conn.commit();
-    res.status(201).json({ ok: true, invoice_id: invoiceId, invoice_no });
+
+    // คืนข้อมูลใบที่สร้างมาให้หน้า UI อัปเดต “ประวัติ” ได้ทันที
+    const [[created]] = await conn.query(
+      `SELECT
+         i.id AS invoice_id, i.invoice_no, i.tenant_id, i.room_id, i.period_ym,
+         i.amount, i.status, i.due_date, i.paid_at, i.slip_url, i.created_at, i.updated_at
+       FROM invoices i WHERE i.id = ? LIMIT 1`,
+      [invoiceId]
+    );
+
+    res.status(201).json(created);
   } catch (e) {
     if (conn.rollback) await conn.rollback();
     console.error('createInvoice error:', e);
@@ -160,9 +222,9 @@ async function generateMonth(req, res) {
       const amt = amount_default ?? t.price ?? 0;
       const due_date = computeDueDate(month, due_date_day ?? process.env.RENT_DUE_DAY);
 
-      const [ins] = await conn.query(
-        `INSERT INTO invoices (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', NOW())`,
+      await conn.query(
+        `INSERT INTO invoices (invoice_no, tenant_id, room_id, period_ym, amount, due_date, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', NOW(), NOW())`,
         [invoice_no, t.tenant_id, t.room_id || null, month, amt, due_date]
       );
       createdCount++;
@@ -211,7 +273,6 @@ async function decideInvoice(req, res) {
     }
 
     if (action === 'approve') {
-      // หา payment pending
       const [pending] = await conn.query(
         `SELECT payment_id
            FROM payments
@@ -386,6 +447,7 @@ async function resendInvoiceNotification(req, res) {
 }
 
 module.exports = {
+  listRecentInvoices,
   getPendingInvoices,
   createInvoice,
   generateMonth,

@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Search, Filter, Plus, Edit2, Trash2, Eye, Home,
-  CheckCircle, User, Link2
+  CheckCircle, User, Link2, Clock
 } from "lucide-react";
 import { roomApi } from "../../api/room.api.js";
 
@@ -67,7 +67,17 @@ export default function AdminRoomManagePage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const getStatusBadge = (status) => {
+  // ====== ป้ายสถานะ ======
+  const getStatusBadge = (statusRaw) => {
+    const status = String(statusRaw || "").toLowerCase();
+    if (status === "reserved" || status === "pending") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+          <Clock className="w-3.5 h-3.5" />
+          ถูกจอง
+        </span>
+      );
+    }
     if (status === "available" || status === "vacant") {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
@@ -155,6 +165,18 @@ export default function AdminRoomManagePage() {
     }
   };
 
+  // ====== ตัวเลขสถิติ ======
+  const total = rooms.length;
+  const availableCount = rooms.filter(r => {
+    const s = String(r.status || "").toLowerCase();
+    return s === "available" || s === "vacant";
+  }).length;
+  const reservedCount = rooms.filter(r => {
+    const s = String(r.status || "").toLowerCase();
+    return s === "reserved" || s === "pending";
+  }).length;
+  const occupiedCount = rooms.filter(r => String(r.status || "").toLowerCase() === "occupied").length;
+
   return (
     <div className="space-y-6">
       {/* Header Section */}
@@ -181,12 +203,12 @@ export default function AdminRoomManagePage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-4 border border-indigo-200">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-indigo-600 font-medium">ห้องทั้งหมด</p>
-                <p className="text-3xl font-bold text-indigo-900 mt-1">{rooms.length}</p>
+                <p className="text-3xl font-bold text-indigo-900 mt-1">{total}</p>
               </div>
               <div className="w-12 h-12 bg-indigo-500 rounded-lg flex items-center justify-center shadow-lg">
                 <Home className="w-6 h-6 text-white" />
@@ -198,12 +220,23 @@ export default function AdminRoomManagePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-emerald-600 font-medium">ห้องว่าง</p>
-                <p className="text-3xl font-bold text-emerald-900 mt-1">
-                  {rooms.filter((r) => r.status === "available" || r.status === "vacant").length}
-                </p>
+                <p className="text-3xl font-bold text-emerald-900 mt-1">{availableCount}</p>
               </div>
               <div className="w-12 h-12 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg">
                 <CheckCircle className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </div>
+
+          {/* ✅ การ์ด “ห้องถูกจอง” สีเหลือง */}
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-amber-600 font-medium">ห้องถูกจอง</p>
+                <p className="text-3xl font-bold text-amber-900 mt-1">{reservedCount}</p>
+              </div>
+              <div className="w-12 h-12 bg-amber-500 rounded-lg flex items-center justify-center shadow-lg">
+                <Clock className="w-6 h-6 text-white" />
               </div>
             </div>
           </div>
@@ -212,9 +245,7 @@ export default function AdminRoomManagePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-sky-600 font-medium">มีผู้เช่า</p>
-                <p className="text-3xl font-bold text-sky-900 mt-1">
-                  {rooms.filter((r) => r.status === "occupied").length}
-                </p>
+                <p className="text-3xl font-bold text-sky-900 mt-1">{occupiedCount}</p>
               </div>
               <div className="w-12 h-12 bg-sky-500 rounded-lg flex items-center justify-center shadow-lg">
                 <User className="w-6 h-6 text-white" />
@@ -240,7 +271,6 @@ export default function AdminRoomManagePage() {
             />
           </div>
 
-          {/* ปุ่มกรอง — โทนเดียวกับปุ่มสร้างห้อง */}
           <button
             className="flex items-center justify-center gap-2 px-5 py-2.5
                        bg-gradient-to-r from-indigo-600 to-indigo-700 text-white
@@ -258,10 +288,7 @@ export default function AdminRoomManagePage() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              {/* หัวตารางสีฟ้าเข้มสุภาพ + ตัวอักษรสีขาว */}
               <tr className="sticky top-0 z-10 bg-indigo-700 border-b border-indigo-800">
-
-
                 <th className="px-6 py-4 text-left text-sm font-semibold text-white">ลำดับ</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-white">รหัสห้อง</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-white">เลขห้อง</th>
@@ -330,10 +357,9 @@ export default function AdminRoomManagePage() {
             <button
               className="px-4 py-2 text-sm rounded-lg bg-indigo-700 text-white font-medium border border-indigo-800"
               disabled
->
-            {page}
+            >
+              {page}
             </button>
-
             <button
               className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
               disabled={page >= totalPages}

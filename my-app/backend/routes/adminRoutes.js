@@ -1,37 +1,84 @@
-// backend/routes/adminRoutes.js
 const express = require('express');
 const router = express.Router();
 
-const adminCtrl = require('../controllers/adminController');
 const adminTenantCtrl = require('../controllers/adminTenantController');
 const debtCtrl = require('../controllers/debtController');
+// เปลี่ยนบรรทัดนี้ให้ชี้ไปที่ไฟล์ที่มีฟังก์ชันจริง
+const invoiceCtrl = require('../controllers/adminController');
 
-// ✅ ป้องกันสิทธิ์สำหรับ route ที่มีผลกระทบ (เช่น resend)
 const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware');
 
-// ===== Invoices =====
-router.get('/invoices/pending', adminCtrl.getPendingInvoices);
-router.post('/invoices', adminCtrl.createInvoice);
-router.post('/invoices/generate-month', adminCtrl.generateMonth);
-router.patch('/invoices/:id/decision', adminCtrl.decideInvoice);
-router.patch('/invoices/:id/cancel', adminCtrl.cancelInvoice);
-router.patch('/invoices/no/:id/cancel', adminCtrl.cancelInvoice);
+/* ===== Invoices ===== */
 
-// ✅ NEW: ส่งการแจ้งเตือนบิลซ้ำ (หลังผู้เช่าผูก LINE แล้ว)
+// ประวัติล่าสุด: GET /api/admin/invoices?limit=10
+router.get(
+  '/invoices',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.listRecentInvoices
+);
+
+// บิลรออนุมัติ
+router.get(
+  '/invoices/pending',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.getPendingInvoices
+);
+
+// ออกบิลรายคน
+router.post(
+  '/invoices',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.createInvoice
+);
+
+// ออกบิลทั้งเดือน
+router.post(
+  '/invoices/generate-month',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.generateMonth
+);
+
+// ตัดสินใจอนุมัติ/ปฏิเสธ
+router.patch(
+  '/invoices/:id/decision',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.decideInvoice
+);
+
+// ยกเลิกบิล (รับ id หรือ invoice_no)
+router.patch(
+  '/invoices/:id/cancel',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.cancelInvoice
+);
+router.patch(
+  '/invoices/no/:id/cancel',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.cancelInvoice
+);
+
+// ส่งแจ้งเตือนซ้ำ
 router.post(
   '/invoices/:id/resend',
   verifyToken,
-  authorizeRoles('admin', 'staff'),
-  adminCtrl.resendInvoiceNotification
+  authorizeRoles('admin','manager','staff'),
+  invoiceCtrl.resendInvoiceNotification
 );
 
-// ===== Tenants =====
+/* ===== Tenants ===== */
 router.get('/tenants', adminTenantCtrl.listTenants);
 router.post('/tenants', adminTenantCtrl.createTenant);
 router.patch('/tenants/:id', adminTenantCtrl.updateTenant);
 router.delete('/tenants/:id', adminTenantCtrl.deleteTenant);
 
-// ===== Debts =====
+/* ===== Debts ===== */
 router.get('/debts/summary', debtCtrl.getDebtSummary);
 router.get('/debts/search', debtCtrl.searchDebts);
 

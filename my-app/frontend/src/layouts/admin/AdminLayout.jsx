@@ -13,7 +13,8 @@ import {
   CheckCircle,
   Search,
   Receipt,
-  Wrench, // 🔧 ไอคอนเมนูแจ้งซ่อม
+  Wrench,
+  CalendarCheck2,
 } from "lucide-react";
 
 /* ===== Reusable Link item ===== */
@@ -52,13 +53,15 @@ function FinanceGroup() {
     location.pathname.startsWith("/admin/debts");
 
   const [open, setOpen] = useState(isOnFinance);
-  useEffect(() => { if (isOnFinance) setOpen(true); }, [isOnFinance]);
+  useEffect(() => {
+    if (isOnFinance) setOpen(true);
+  }, [isOnFinance]);
 
   return (
     <div className="space-y-1">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         className={
           "w-full flex items-center justify-between px-4 py-3 rounded-lg text-slate-100/90 " +
           "hover:bg-white/10 hover:text-white transition-all duration-200"
@@ -71,7 +74,81 @@ function FinanceGroup() {
           </span>
           <span className="font-medium text-sm">การเงิน</span>
         </span>
-        {open ? <ChevronDown className="w-4 h-4 opacity-80" /> : <ChevronRight className="w-4 h-4 opacity-80" />}
+        {open ? (
+          <ChevronDown className="w-4 h-4 opacity-80" />
+        ) : (
+          <ChevronRight className="w-4 h-4 opacity-80" />
+        )}
+      </button>
+
+      <div
+        className={
+          "overflow-hidden transition-all duration-200 " +
+          (open ? "max-h-96 opacity-100" : "max-h-0 opacity-0")
+        }
+      >
+        <div className="mt-1 ml-2 pl-2 border-l border-white/10 space-y-1">
+          {items.map(({ to, label, icon: Icon, end }, idx) => (
+            <NavLink
+              key={idx}
+              to={to}
+              end={end}
+              className={({ isActive }) =>
+                "flex items-center gap-2 px-4 py-2 rounded-md text-sm " +
+                (isActive
+                  ? "bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30"
+                  : "text-slate-200/90 hover:bg-white/5 hover:text-white")
+              }
+            >
+              <Icon className="w-4 h-4 flex-shrink-0" />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== Rooms dropdown group ===== */
+function RoomsGroup() {
+  const location = useLocation();
+
+  const items = useMemo(
+    () => [
+      { to: "/admin/rooms",               label: "จัดการห้องพัก",    icon: Home,           end: true },
+      { to: "/admin/rooms/reservations",  label: "อนุมัติการจองห้อง", icon: CalendarCheck2, end: false },
+    ],
+    []
+  );
+
+  const isOnRooms = location.pathname.startsWith("/admin/rooms");
+  const [open, setOpen] = useState(isOnRooms);
+
+  useEffect(() => {
+    if (isOnRooms) setOpen(true);
+  }, [isOnRooms]);
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-slate-100/90
+                   hover:bg-white/10 hover:text-white transition-all duration-200"
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-3">
+          <span className="inline-flex w-5 h-5 items-center justify-center">
+            <Home className="w-5 h-5" />
+          </span>
+          <span className="font-medium text-sm">การจัดการห้องพัก</span>
+        </span>
+        {open ? (
+          <ChevronDown className="w-4 h-4 opacity-80" />
+        ) : (
+          <ChevronRight className="w-4 h-4 opacity-80" />
+        )}
       </button>
 
       <div className={"overflow-hidden transition-all duration-200 " + (open ? "max-h-96 opacity-100" : "max-h-0 opacity-0")}>
@@ -97,7 +174,6 @@ function FinanceGroup() {
     </div>
   );
 }
-
 
 export default function AdminLayout() {
   const handleLogout = () => {
@@ -140,8 +216,10 @@ export default function AdminLayout() {
               {/* ✅ Dashboard (index /admin) */}
               <LinkItem to="/admin" icon={LayoutDashboard} label="แดชบอร์ด" end />
 
-              <LinkItem to="/admin/rooms"   icon={Home}   label="จัดการห้องพัก" end />
-              <LinkItem to="/admin/tenants" icon={Users}  label="จัดการผู้เช่า" />
+              {/* ▼ กลุ่มเมนูย่อยการจัดการห้องพัก */}
+              <RoomsGroup />
+
+              <LinkItem to="/admin/tenants" icon={Users} label="จัดการผู้เช่า" />
 
               {/* ✅ Repairs management */}
               <LinkItem to="/admin/repairs" icon={Wrench} label="การจัดการแจ้งซ่อม" />

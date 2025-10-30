@@ -18,6 +18,8 @@ import AdminPaymentsPage from "../pages/admin/AdminPaymentsPage";
 import AdminRepairManagement from "../pages/admin/AdminRepairManagement";
 import AdminDebtSearchPage from "../pages/admin/DebtSearchPage";
 import AdminDashboardPage from "../pages/admin/DashboardPage";
+/* ✅ NEW: import หน้าสำหรับอนุมัติการจองห้อง */
+import AdminRoomReservationsPage from "../pages/admin/AdminRoomReservationsPage";
 
 // Tenant pages
 import RoomInfoPage from "../pages/tenant/RoomInfoPage";
@@ -91,6 +93,8 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/admin/dashboard" replace /> },
       { path: "dashboard", element: <AdminDashboardPage /> },
       { path: "rooms", element: <AdminRoomManagePage /> },
+      /* ✅ NEW: หน้าย่อยของจัดการห้องพัก: อนุมัติการจอง */
+      { path: "rooms/reservations", element: <AdminRoomReservationsPage /> },
       { path: "tenants", element: <AdminTenantsManagePage /> },
       { path: "payments", element: <AdminInvoiceCreatePage /> },     // ออกบิล
       { path: "payments/review", element: <AdminPaymentsPage /> },    // อนุมัติ/ปฏิเสธ
