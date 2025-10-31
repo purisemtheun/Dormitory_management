@@ -99,40 +99,73 @@ exports.getRevenueDaily = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-/* ========================= 3) Payments ========================= */
 exports.getPayments = async (req, res, next) => {
   try {
     const { from, to } = req.query;
-    if (!from || !to) return res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
+    if (!from || !to) {
+      return res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
+    }
 
+    // ช่วงเวลาครอบคลุมทั้งวันแบบ inclusive
+    const dfrom = `${from} 00:00:00`;
+    const dto   = `${to} 23:59:59`;
+
+    // A) ยอดจาก payments ที่อนุมัติแล้ว (approved) — ใช้วันที่จ่าย p.payment_date
+    // B) ยอดจาก invoices ที่สถานะ paid — ใช้วันที่ i.paid_at
+    // ใช้ COALESCE เพื่อให้ได้วัน-ห้อง-ผู้ชำระครบ และรวมผลด้วย UNION ALL
     const sql = `
       SELECT
-        COALESCE(i.paid_at, p.payment_date) AS paid_at,
-        i.room_id,
+        COALESCE(i.paid_at, p.payment_date)             AS paid_at,
+        r.room_id,
         r.room_number,
         i.invoice_no,
-        p.amount,
-        COALESCE(u.fullname, u.name)        AS tenant_name,
-        p.status                            AS payment_status,
+        /* amount ให้มาก่อนจาก payments ถ้ามี ไม่งั้นใช้ยอดรวมทั้งบิล */
+        COALESCE(p.amount, i.amount, 0)                 AS amount,
+        COALESCE(u.fullname, u.name)                    AS tenant_name,
+        /* แปลงสถานะเป็น label ไทย */
         CASE
-          WHEN p.status = 'approved' THEN 'ชำระเสร็จสิ้น' COLLATE utf8mb4_unicode_ci
-          WHEN p.status = 'pending'  THEN 'รอตรวจสอบ'   COLLATE utf8mb4_unicode_ci
-          WHEN p.status = 'rejected' THEN 'ปฏิเสธ'       COLLATE utf8mb4_unicode_ci
-          ELSE CAST(p.status AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-        END                                  AS payment_status_th
+          WHEN p.status = 'approved' OR i.status='paid' THEN 'approved'
+          WHEN p.status = 'pending'  THEN 'pending'
+          WHEN p.status = 'rejected' THEN 'rejected'
+          ELSE COALESCE(p.status, i.status)
+        END                                             AS payment_status
       FROM payments p
-      JOIN invoices  i ON i.id        = p.invoice_id
-      LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
-      LEFT JOIN users   u ON u.id      = t.user_id
-      LEFT JOIN rooms   r ON r.room_id = i.room_id
-      WHERE p.payment_date BETWEEN ? AND ?
-        AND p.status IN ('approved','pending','rejected')
-      ORDER BY COALESCE(i.paid_at, p.payment_date) DESC
+        JOIN invoices  i ON i.id = p.invoice_id
+        LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
+        LEFT JOIN users   u ON u.id      = t.user_id
+        LEFT JOIN rooms   r ON r.room_id = i.room_id
+      WHERE p.status = 'approved'
+        AND COALESCE(i.paid_at, p.payment_date) BETWEEN ? AND ?
+      
+      UNION ALL
+
+      SELECT
+        i.paid_at                                      AS paid_at,
+        r.room_id,
+        r.room_number,
+        i.invoice_no,
+        i.amount                                       AS amount,
+        COALESCE(u.fullname, u.name)                   AS tenant_name,
+        'approved'                                     AS payment_status
+      FROM invoices i
+        LEFT JOIN tenants t ON t.tenant_id = i.tenant_id
+        LEFT JOIN users   u ON u.id      = t.user_id
+        LEFT JOIN rooms   r ON r.room_id = i.room_id
+      WHERE i.status = 'paid'
+        AND i.paid_at BETWEEN ? AND ?
+        /* กันไม่ให้ซ้ำกับบิลที่มี payments อนุมัติแล้ว */
+        AND NOT EXISTS (
+          SELECT 1 FROM payments p2
+          WHERE p2.invoice_id = i.id AND p2.status = 'approved'
+        )
+      ORDER BY paid_at DESC, room_number+0, room_number
     `;
-    const params = [`${from} 00:00:00`, `${to} 23:59:59`];
-    const [rows] = await pool.query(sql, params);
-    res.json(asArray(rows));
-  } catch (err) { next(err); }
+
+    const [rows] = await pool.query(sql, [dfrom, dto, dfrom, dto]);
+    res.json(Array.isArray(rows) ? rows : []);
+  } catch (err) {
+    next(err);
+  }
 };
 
 /* ========================= 4) Debts ========================= */
@@ -142,17 +175,22 @@ exports.getDebts = async (req, res, next) => {
     const [rows] = await pool.query(
       `
       SELECT
-        i.invoice_no  AS invoiceNo,
-        r.room_number AS roomNo,
-        COALESCE(u.name, u.fullname) AS tenant,
-        i.amount,
+        i.invoice_no                         AS invoiceNo,
+        r.room_number                        AS roomNo,
+        COALESCE(u.fullname, u.name, u.email, CONCAT('Tenant#', i.tenant_id)) AS tenant,
+        -- ยอดแยกหมวด
+        COALESCE(i.rent_amount,     0)       AS rent_amount,
+        COALESCE(i.water_amount,    0)       AS water_amount,
+        COALESCE(i.electric_amount, 0)       AS electric_amount,
+        COALESCE(i.amount,          0)       AS total_amount,
+        -- อายุหนี้
         GREATEST(DATEDIFF(?, i.due_date), 0) AS daysOverdue
       FROM invoices i
-      JOIN rooms   r ON r.room_id = i.room_id
-      JOIN tenants t ON t.tenant_id = i.tenant_id AND t.is_deleted = 0
-      JOIN users   u ON u.id = t.user_id
+      JOIN rooms   r ON r.room_id   = i.room_id
+      JOIN tenants t ON t.tenant_id = i.tenant_id AND COALESCE(t.is_deleted,0) = 0
+      LEFT JOIN users   u ON u.id   = t.user_id
       WHERE UPPER(i.status) IN ('UNPAID','OVERDUE')
-      ORDER BY daysOverdue DESC, roomNo
+      ORDER BY daysOverdue DESC, r.room_number+0, r.room_number
       `,
       [asOf]
     );
@@ -269,35 +307,63 @@ exports.toggleMeterLock = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-/* ========================= 6) รายเดือน (ค่าเช่าจากห้องที่มีผู้เช่า + น้ำ/ไฟจากมิเตอร์) ========================= */
+/* ========================= 6) รายเดือน (อิงใบแจ้งหนี้ + ยอดที่เก็บแล้ว) ========================= */
 exports.monthlySummary = async (req, res, next) => {
   try {
+    // จำนวนเดือนย้อนหลัง (1–24)
     const months = Math.max(1, Math.min(24, Number(req.query.months || 6)));
 
-    const [rows] = await pool.query(
-      `
-      SELECT
-        mr.period_ym,
-        SUM(CASE WHEN t.tenant_id IS NOT NULL THEN r.price ELSE 0 END)                        AS rent_amount,
-        SUM(COALESCE(mr.water_units,0)    * COALESCE(mr.water_rate,0))                         AS water_amount,
-        SUM(COALESCE(mr.electric_units,0) * COALESCE(mr.electric_rate,0))                      AS electric_amount,
-        SUM( (CASE WHEN t.tenant_id IS NOT NULL THEN r.price ELSE 0 END)
-            + COALESCE(mr.water_units,0)    * COALESCE(mr.water_rate,0)
-            + COALESCE(mr.electric_units,0) * COALESCE(mr.electric_rate,0) )                   AS total_amount,
-        COUNT(DISTINCT mr.room_id)                                                             AS rooms_count
-      FROM meter_readings mr
-      JOIN rooms r        ON r.room_id = mr.room_id
-      LEFT JOIN tenants t ON t.room_id = r.room_id AND t.is_deleted = 0
-      GROUP BY mr.period_ym
-      ORDER BY mr.period_ym DESC
-      LIMIT ?
-      `,
-      [months]
-    );
+    // อธิบายแนวคิด:
+    //  - billed: sum จาก invoices (rent_amount, water_amount, electric_amount, amount)
+    //  - collected: sum จาก payments ที่ status='approved' (รวมต่อใบ) -> รวมต่อเดือน
+    //    หมายเหตุ: ไม่มีการเก็บยอดแยกประเภทตอนชำระ จึงให้ rent_collected/water_collected/electric_collected = 0
+    //    และคืน total_collected เพียงค่าเดียว เพื่อให้ฝั่ง UI fallback ไปใช้ billed รายประเภท (โค้ด UI ทำไว้แล้ว)
 
+    const sql = `
+      SELECT
+        i.period_ym,
+
+        /* ===== billed (จาก invoices) ===== */
+        SUM(COALESCE(i.rent_amount,    0)) AS rent_amount,
+        SUM(COALESCE(i.water_amount,   0)) AS water_amount,
+        SUM(COALESCE(i.electric_amount,0)) AS electric_amount,
+        SUM(COALESCE(i.amount,         0)) AS total_amount,
+
+        /* จำนวนห้องที่มีการวางบิลในเดือนนั้น */
+        COUNT(DISTINCT i.room_id)          AS rooms_count,
+
+        /* ===== collected (จาก payments อนุมัติแล้ว) ===== */
+        0                                   AS rent_collected,
+        0                                   AS water_collected,
+        0                                   AS electric_collected,
+        SUM(COALESCE(paid.paid_amount, 0))  AS total_collected
+
+      FROM invoices i
+
+      /* รวมยอดชำระต่อใบที่ได้รับการอนุมัติแล้ว */
+      LEFT JOIN (
+        SELECT invoice_id, SUM(amount) AS paid_amount
+        FROM payments
+        WHERE status = 'approved'
+        GROUP BY invoice_id
+      ) AS paid
+        ON paid.invoice_id = i.id
+
+      /* จำกัดช่วงเดือนย้อนหลังโดยอิงจาก period_ym ของใบแจ้งหนี้ */
+      WHERE i.period_ym >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')
+
+      GROUP BY i.period_ym
+      ORDER BY i.period_ym DESC
+      LIMIT ?
+    `;
+
+    // อธิบาย param:
+    //  - ใช้ months เดียวกันทั้ง filter และ limit เพื่อกันข้อมูลเกินช่วง
+    const [rows] = await pool.query(sql, [Number(months), Number(months)]);
     return res.json(asArray(rows));
   } catch (err) { next(err); }
 };
+
 
 /* ========================= 7) แตกห้องรายเดือน ========================= */
 exports.monthlyBreakdown = async (req, res, next) => {

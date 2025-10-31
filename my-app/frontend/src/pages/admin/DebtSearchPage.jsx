@@ -4,10 +4,7 @@ import { fetchDebtSummary, searchDebts } from "../../services/debtService";
 import {
   Search as SearchIcon,
   RefreshCw,
-  Users,
   AlertTriangle,
-  Coins,
-  Clock,
   Home,
   CalendarDays,
   Phone,
@@ -72,7 +69,6 @@ export default function DebtSearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ปุ่มรีเฟรช = โหลดทั้งสรุป+ตาราง
   const refreshAll = () => {
     loadSummary();
     loadTable();
@@ -94,71 +90,51 @@ export default function DebtSearchPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* ======= Header + Filters (รวมในการ์ดเดียว) ======= */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-              <AlertTriangle className="w-6 h-6 text-indigo-600" />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-slate-700" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">ค้นหาหนี้ผู้เช่า</h2>
+                <p className="text-slate-500 text-sm">
+                  ดูภาพรวมยอดค้างและค้นหาผู้เช่าที่เกินกำหนด •
+                  <span className="ml-1 font-medium text-rose-600">
+                    ค้างชำระได้ไม่เกิน 2 เดือนหรือ 60 วัน
+                  </span>
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-slate-800">ค้นหาหนี้ผู้เช่า</h2>
-              <p className="text-slate-600 text-sm">ดูภาพรวมยอดค้างและค้นหาผู้เช่าที่เกินกำหนด</p>
-            </div>
+
+            {/* สรุปย่อแบบ Badge (แทนบล็อคสี) */}
+            {summary && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge label="ผู้เช่าทั้งหมด" value={summary.tenants_total} />
+                <Badge label="มียอดค้าง" value={summary.tenants_debtors} tone="amber" />
+                <Badge label="ยอดค้างรวม" value={`฿ ${fmtMoney(summary.outstanding_total)}`} tone="emerald" />
+                <Badge label="ยอดเกินกำหนด" value={`฿ ${fmtMoney(summary.overdue_total)}`} tone="rose" />
+                <Badge label="เกินกำหนดสูงสุด (วัน)" value={summary.max_overdue_days} tone="sky" />
+              </div>
+            )}
           </div>
+
           <button
             onClick={refreshAll}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 
-                       text-white rounded-lg hover:from-indigo-700 hover:to-indigo-800 transition-all
-                       shadow-lg shadow-indigo-200 font-medium"
+            className="inline-flex items-center gap-2 self-start sm:self-auto px-4 py-2.5
+                       rounded-lg border border-slate-300 bg-white hover:bg-slate-50 transition
+                       text-slate-700 font-medium"
           >
             <RefreshCw className="w-4 h-4" />
             รีเฟรช
           </button>
         </div>
-      </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard
-          title="ผู้เช่าทั้งหมด"
-          value={summary?.tenants_total ?? "-"}
-          icon={<Users className="w-6 h-6 text-indigo-600" />}
-          bg="from-indigo-50 to-indigo-100"
-          ring="border-indigo-200"
-        />
-        <StatCard
-          title="มียอดค้าง"
-          value={summary?.tenants_debtors ?? "-"}
-          icon={<AlertTriangle className="w-6 h-6 text-amber-600" />}
-          bg="from-amber-50 to-amber-100"
-          ring="border-amber-200"
-        />
-        <StatCard
-          title="ยอดค้างรวม"
-          value={summary ? fmtMoney(summary.outstanding_total) : "-"}
-          icon={<Coins className="w-6 h-6 text-emerald-600" />}
-          bg="from-emerald-50 to-emerald-100"
-          ring="border-emerald-200"
-        />
-        <StatCard
-          title="ยอดเกินกำหนด"
-          value={summary ? fmtMoney(summary.overdue_total) : "-"}
-          icon={<Coins className="w-6 h-6 text-rose-600" />}
-          bg="from-rose-50 to-rose-100"
-          ring="border-rose-200"
-        />
-        <StatCard
-          title="เกินกำหนดสูงสุด (วัน)"
-          value={summary?.max_overdue_days ?? "-"}
-          icon={<Clock className="w-6 h-6 text-sky-600" />}
-          bg="from-sky-50 to-sky-100"
-          ring="border-sky-200"
-        />
-      </div>
+        <div className="my-5 border-t border-slate-200" />
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        {/* ฟิลเตอร์ค้นหา */}
         <form
           className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end"
           onSubmit={(e) => {
@@ -269,7 +245,7 @@ export default function DebtSearchPage() {
         )}
       </div>
 
-      {/* Table */}
+      {/* ======= Table ======= */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -296,7 +272,9 @@ export default function DebtSearchPage() {
                   <tr key={r.tenant_id ?? idx} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-slate-400" />
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">
+                          👤
+                        </span>
                         <span className="font-medium text-slate-800">{r.tenant_name}</span>
                       </div>
                     </td>
@@ -391,18 +369,19 @@ function Field({ label, children }) {
   );
 }
 
-function StatCard({ title, value, icon, bg, ring }) {
+function Badge({ label, value, tone = "slate" }) {
+  const toneMap = {
+    slate:   "bg-slate-50 text-slate-700 border-slate-200",
+    amber:   "bg-amber-50 text-amber-700 border-amber-200",
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    rose:    "bg-rose-50 text-rose-700 border-rose-200",
+    sky:     "bg-sky-50 text-sky-700 border-sky-200",
+  };
+  const cls = toneMap[tone] || toneMap.slate;
   return (
-    <div className={`bg-gradient-to-br ${bg} rounded-xl p-4 border ${ring}`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-slate-700">{title}</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
-        </div>
-        <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow">
-          {icon}
-        </div>
-      </div>
-    </div>
+    <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border ${cls}`}>
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold">{value ?? "-"}</span>
+    </span>
   );
 }

@@ -17,6 +17,20 @@ const monthLabel = (ym) => {
   return dt.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
 };
 
+// ✅ ฟังก์ชันรวม fallback ของ "ชื่อผู้เช่า" ให้แน่นอน
+const tenantNameOf = (r = {}) => {
+  const name =
+    r.tenant_name ??
+    r.tenant ??
+    r.fullname ??
+    r.name ??
+    r.tenantName ??
+    r.tenant_fullname ??
+    "";
+  const s = String(name || "").trim();
+  return s.length ? s : "-";
+};
+
 export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
   // Data/UI state
   const [rows, setRows] = useState([]);
@@ -251,8 +265,10 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                     <tr key={r.room_id} className="hover:bg-slate-50/60 text-[15px]">
                       <td className="px-4 py-3">{startIdx + idx + 1}</td>
                       <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
+
+                      {/* ✅ ชื่อผู้เช่า (รองรับหลายคีย์ + กันค่าว่าง) */}
                       <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">
-                        {r.tenant_name ?? r.tenant ?? "-"}
+                        {tenantNameOf(r)}
                       </td>
 
                       {/* WATER UNIT */}

@@ -122,7 +122,7 @@ export default function TenantRepairCreatePage() {
               <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">แจ้งซ่อม</h1>
             </div>
             <p className="text-white/85 mt-2 text-sm sm:text-base">
-              กรอกข้อมูลปัญหา พร้อมแนบรูปประกอบ (ถ้ามี) เพื่อให้ช่างวินิจฉัยได้ไวขึ้น
+              กรอกข้อมูลปัญหา พร้อมแนบรูปประกอบ (ถ้ามี) เพื่อให้ช่างทำงานได้ไวขึ้น
             </p>
           </div>
 
