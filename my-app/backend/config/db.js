@@ -1,4 +1,4 @@
-// backend/config/db.js
+// ...existing code...
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
@@ -7,21 +7,15 @@ const host = process.env.DB_HOST || '127.0.0.1';
 const port = Number(process.env.DB_PORT || 3306);
 
 function readCA() {
-  // 1) ENV ใหม่ (แนะนำ)
   let ca = (process.env.DB_SSL_CA || '').trim();
-  // 2) ENV เดิม (รองรับชื่อเก่า)
   if (!ca) ca = (process.env.DB_CA || '').trim();
-  // 3) base64
   if (!ca && process.env.DB_CA_B64) {
     try { ca = Buffer.from(process.env.DB_CA_B64, 'base64').toString('utf8').trim(); } catch {}
   }
-  // 4) จากไฟล์ (DB_SSL_CA_FILE) หรือไฟล์ดีฟอลต์ในโปรเจกต์
   if (!ca) {
-    // ใช้ path จาก ENV ถ้ามี ไม่งั้น fallback ไปที่ backend/config/ca.pem
-    const filePath = process.env.DB_SSL_CA_FILE || path.join(__dirname, 'ca.pem');
+    const filePath = process.env.DB_SSL_CA_FILE || path.join(__dirname, 'aiven-ca.pem'); // ชี้ไฟล์ Aiven
     try { ca = fs.readFileSync(filePath, 'utf8').trim(); } catch {}
   }
-  // รองรับกรณีวาง ENV แบบ single-line ใส่ \n
   if (ca && ca.includes('\\n')) ca = ca.replace(/\\n/g, '\n');
   return ca || null;
 }
@@ -39,13 +33,29 @@ const cfg = {
   timezone: 'Z',
 };
 
-// TLS/SSL (Aiven บังคับ)
+// ENABLE SSL when explicitly requested or for known hosts (e.g. Aiven)
 if (process.env.DB_SSL === '1' || /aivencloud\.com$/i.test(host)) {
   const ca = readCA();
-  const reject = String(process.env.DB_SSL_REJECT_UNAUTHORIZED || 'true') === 'true';
-  cfg.ssl = ca
-    ? { ca, minVersion: 'TLSv1.2', servername: host, rejectUnauthorized: reject }
-    : { minVersion: 'TLSv1.2', servername: host, rejectUnauthorized: reject };
+
+  // Allow self-signed certs in non-production or when explicitly allowed via env.
+  // WARNING: DB_ALLOW_SELF_SIGNED=1 should NOT be used in production.
+  const allowSelfSigned = process.env.DB_ALLOW_SELF_SIGNED === '1' || process.env.NODE_ENV !== 'production';
+
+  cfg.ssl = {
+    minVersion: 'TLSv1.2',
+    servername: host, // SNI
+    // If CA is present use it; otherwise, optionally accept self-signed certs.
+    ...(ca ? { ca } : {}),
+    // rejectUnauthorized = false will accept self-signed certs.
+    rejectUnauthorized: !allowSelfSigned,
+  };
+
+  if (!ca && allowSelfSigned) {
+    console.warn('DB SSL: no CA provided — allowing self-signed certificates (DB_ALLOW_SELF_SIGNED=1 or NODE_ENV!=production).');
+  } else if (!ca && !allowSelfSigned) {
+    console.warn('DB SSL: no CA provided and self-signed certs not allowed — connection may fail (set DB_CA / DB_SSL_CA or DB_ALLOW_SELF_SIGNED=1 for dev).');
+  }
 }
 
 module.exports = mysql.createPool(cfg);
+// ...existing code...

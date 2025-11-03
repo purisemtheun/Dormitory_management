@@ -32,6 +32,19 @@ export default function AdminRoomManagePage() {
   const [linkForm, setLinkForm] = useState({ userId: "", checkin_date: "" });
   const [busy, setBusy] = useState(false);
 
+  // ====== แก้ไขห้อง ======
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editForm, setEditForm] = useState({
+    room_id: "",
+    room_number: "",
+    price: "",
+    has_fan: false,
+    has_aircon: false,
+    has_fridge: false,
+    status: "available",
+  });
+
   // โหลดข้อมูล
   const loadRooms = async () => {
     try {
@@ -165,6 +178,52 @@ export default function AdminRoomManagePage() {
     }
   };
 
+  // ====== Edit room ======
+  const openEditModal = (r) => {
+    setEditForm({
+      room_id: r.room_id,
+      room_number: r.room_number ?? "",
+      price: r?.price ?? "",
+      has_fan: !!r?.has_fan,
+      has_aircon: !!r?.has_aircon,
+      has_fridge: !!r?.has_fridge,
+      status: String(r?.status || "").toLowerCase(),
+    });
+    setShowEditModal(true);
+  };
+
+  const submitEditRoom = async (e) => {
+    e.preventDefault();
+    setEditBusy(true);
+    try {
+      await roomApi.update(editForm.room_id, {
+        room_number: editForm.room_number.trim(),
+        price: editForm.price === "" ? null : Number(editForm.price),
+        status: editForm.status, // backend จะ normalize เอง
+        has_fan: !!editForm.has_fan,
+        has_aircon: !!editForm.has_aircon,
+        has_fridge: !!editForm.has_fridge,
+      });
+      setShowEditModal(false);
+      await loadRooms();
+    } catch (err) {
+      alert(err?.response?.data?.error || err.message);
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  // ====== Delete room ======
+  const handleDelete = async (r) => {
+    if (!window.confirm(`ลบห้อง ${r.room_id} (${r.room_number}) ?`)) return;
+    try {
+      await roomApi.remove(r.room_id);
+      await loadRooms();
+    } catch (err) {
+      alert(err?.response?.data?.error || err.message);
+    }
+  };
+
   // ====== ตัวเลขสถิติ ======
   const total = rooms.length;
   const availableCount = rooms.filter(r => {
@@ -228,7 +287,7 @@ export default function AdminRoomManagePage() {
             </div>
           </div>
 
-          {/* ✅ การ์ด “ห้องถูกจอง” สีเหลือง */}
+          {/* Reserved */}
           <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200">
             <div className="flex items-center justify-between">
               <div>
@@ -276,6 +335,7 @@ export default function AdminRoomManagePage() {
                        bg-gradient-to-r from-indigo-600 to-indigo-700 text-white
                        rounded-lg hover:from-indigo-700 hover:to-indigo-800
                        transition-all duration-200 shadow-lg shadow-indigo-200 font-medium"
+            type="button"
           >
             <Filter className="w-4 h-4" />
             กรอง
@@ -315,20 +375,35 @@ export default function AdminRoomManagePage() {
                     <td className="px-6 py-4">{getStatusBadge(r.status)}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-center gap-2">
-                        <button className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="ดูรายละเอียด">
+                        <button
+                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                          title="ดูรายละเอียด"
+                          type="button"
+                        >
                           <Eye className="w-4 h-4" />
                         </button>
-                        <button className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg" title="แก้ไข">
+                        <button
+                          className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg"
+                          title="แก้ไข"
+                          type="button"
+                          onClick={() => openEditModal(r)}
+                        >
                           <Edit2 className="w-4 h-4" />
                         </button>
                         <button
                           className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg"
                           onClick={() => openLinkModal(r)}
                           title="ผูกผู้เช่า"
+                          type="button"
                         >
                           <Link2 className="w-4 h-4" />
                         </button>
-                        <button className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="ลบ">
+                        <button
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                          title="ลบ"
+                          type="button"
+                          onClick={() => handleDelete(r)}
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -509,6 +584,101 @@ export default function AdminRoomManagePage() {
                   className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
                 >
                   {busy ? "กำลังบันทึก..." : "ยืนยัน"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal แก้ไขห้อง */}
+      {showEditModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
+          onClick={() => setShowEditModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-xl font-bold text-slate-800 mb-4">
+              แก้ไขห้อง {editForm.room_id}
+            </h3>
+            <form onSubmit={submitEditRoom} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">เลขห้อง</label>
+                  <input
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    value={editForm.room_number}
+                    onChange={(e) => setEditForm(p => ({ ...p, room_number: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">ราคา (บาท)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    value={editForm.price}
+                    onChange={(e) => setEditForm(p => ({ ...p, price: e.target.value }))}
+                    placeholder="เช่น 3500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">สถานะ</label>
+                  <select
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    value={editForm.status}
+                    onChange={(e) => setEditForm(p => ({ ...p, status: e.target.value }))}
+                  >
+                    <option value="available">ว่าง</option>
+                    <option value="reserved">ถูกจอง</option>
+                    <option value="occupied">มีผู้เช่า</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-6 pt-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={editForm.has_fan}
+                    onChange={(e) => setEditForm(p => ({ ...p, has_fan: e.target.checked }))}
+                  />
+                  พัดลม
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={editForm.has_aircon}
+                    onChange={(e) => setEditForm(p => ({ ...p, has_aircon: e.target.checked }))}
+                  />
+                  แอร์
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={editForm.has_fridge}
+                    onChange={(e) => setEditForm(p => ({ ...p, has_fridge: e.target.checked }))}
+                  />
+                  ตู้เย็น
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" className="px-4 py-2 border rounded-lg" onClick={() => setShowEditModal(false)}>
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={editBusy}
+                  className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition disabled:opacity-50"
+                >
+                  {editBusy ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
                 </button>
               </div>
             </form>

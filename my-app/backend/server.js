@@ -4,24 +4,23 @@ const express = require('express');
 const cors = require('cors');
 
 /* ==================== Load env ==================== */
-// โหลดจาก .envlocal เฉพาะตอน dev; บน Render จะฉีด env มาเอง
+// dev เท่านั้น; บน Render จะฉีด ENV เอง
 if (process.env.NODE_ENV !== 'production') {
+  // หมายเหตุ: ไฟล์ของคุณชื่อ ".envlocal"
+  // ถ้าใช้ ".env.local" ให้แก้ path ตรงนี้
   require('dotenv').config({ path: path.join(__dirname, '.envlocal') });
 }
 
 const app = express();
 
 /* ==================== DB connect ==================== */
-require('./config/db'); // แค่ require เพื่อเปิดคอนเนคชัน
+// เพียง require เพื่อให้ config/db.js สร้าง pool และเชื่อมต่อ
+require('./config/db');
 
 /* ==================== Middlewares ==================== */
-const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
-const paymentCtrl      = require('./controllers/paymentController');
-const repairController = require('./controllers/repairController');
-
 app.disable('x-powered-by');
 
-// อนุญาต CORS เฉพาะ origin ที่กำหนด (รวมเว็บบน Render)
+// CORS — อนุญาต origin ที่ต้องใช้เท่านั้น
 const ALLOWED = [
   'http://localhost:3000',
   'http://localhost:3001',
@@ -44,7 +43,15 @@ app.use(express.urlencoded({ extended: true }));
 // Static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+/* ==================== DEBUG ROUTES (ต้องอยู่ก่อน catch-all/404) ==================== */
+// แนะนำ: ปิดใน production หากไม่ต้องการเปิดเผยข้อมูลระบบ
+app.use('/api/debug', require('./routes/debug'));
+
 /* ==================== API Routes ==================== */
+const { verifyToken, authorizeRoles } = require('./middlewares/authMiddleware');
+const paymentCtrl      = require('./controllers/paymentController');
+const repairController = require('./controllers/repairController');
+
 // Health
 app.get('/api', (_req, res) => {
   res.json({
@@ -91,9 +98,8 @@ app.get('/api/invoices', verifyToken, paymentCtrl.getMyLastInvoices);
 const CLIENT_BUILD = path.join(__dirname, 'build');
 app.use(express.static(CLIENT_BUILD));
 
-// เดิม: app.get('*', ...)  <-- ทำให้ error บน Express v5
-// ใหม่: ใช้ RegExp และกัน /api ออกด้วย negative lookahead
-app.get(/^(?!\/api).*/, (req, res) => {
+// ใช้ RegExp กัน /api ไม่ให้ถูกจับโดย SPA fallback
+app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(CLIENT_BUILD, 'index.html'));
 });
 
