@@ -1,47 +1,82 @@
-// backend/test-connection.js
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') }); // โหลด backend/.env
-const fs = require('fs');
+// ...existing code...
 const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
+
+// load env (safe) — prefer backend/.envlocal, fallback to parent
+try {
+  const local = path.join(__dirname, '.envlocal');
+  const parent = path.join(__dirname, '..', '.envlocal');
+  const envPath = fs.existsSync(local) ? local : fs.existsSync(parent) ? parent : null;
+  if (envPath) {
+    require('dotenv').config({ path: envPath });
+    console.log('Loaded env from', envPath);
+  } else {
+    console.warn('No .envlocal found at', local, 'or', parent);
+  }
+} catch (e) { /* ignore */ }
 
 const host = process.env.DB_HOST || '127.0.0.1';
 const port = Number(process.env.DB_PORT || 3306);
+const user = process.env.DB_USER || 'root';
+const password = process.env.DB_PASSWORD || '';
+const database = process.env.DB_NAME || 'dormitory_management';
 
-// เปิด SSL เฉพาะตอนต่อ Aiven
-let ssl;
-try {
-  if (host.includes('aivencloud.com')) {
-    const caPath = path.join(__dirname, 'certs', 'ca.pem');
-    ssl = { ca: fs.readFileSync(caPath), minVersion: 'TLSv1.2', servername: host };
+function readCA() {
+  const file = process.env.DB_SSL_CA_FILE;
+  if (!file) return null;
+  try {
+    const content = fs.readFileSync(file, 'utf8');
+    return content;
+  } catch (e) {
+    console.warn('DB: failed to read DB_SSL_CA_FILE=', file, e.message);
+    return null;
   }
-} catch (e) {
-  console.error('CA load error:', e.message);
 }
 
+const cfg = {
+  host,
+  port,
+  user,
+  password,
+  database,
+  waitForConnections: true,
+  connectionLimit: Number(process.env.DB_CONN_LIMIT || 10),
+  queueLimit: 0,
+  charset: 'utf8mb4',
+  timezone: 'Z',
+};
+
+// SSL config if requested or known host (Aiven)
+if (process.env.DB_SSL === '1' || /aivencloud\.com$/i.test(host)) {
+  const ca = readCA();
+  const allowSelfSigned = process.env.DB_ALLOW_SELF_SIGNED === '1' || process.env.NODE_ENV !== 'production';
+
+  cfg.ssl = {
+    ...(ca ? { ca } : {}),
+    rejectUnauthorized: !allowSelfSigned,
+    servername: host,
+    minVersion: 'TLSv1.2',
+  };
+
+  console.log('DB SSL config -> CA present:', !!ca, 'allowSelfSigned:', allowSelfSigned);
+}
+
+const pool = mysql.createPool(cfg);
+
+// diagnostic: log actual TLS negotiation result using @@ssl_cipher
 (async () => {
   try {
-    console.log('DB_HOST =', process.env.DB_HOST);
-    console.log('Using host/port :', host, port, 'SSL=', ssl ? 'ON' : 'OFF');
-
-    const pool = mysql.createPool({
-      host,
-      port,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'dormitory_management',
-      waitForConnections: true,
-      connectionLimit: 5,
-      ssl, // ใส่เฉพาะเมื่อเป็น Aiven
-    });
-
-    const [[row]] = await pool.query('SELECT @@version AS ver, @@hostname AS host, NOW() AS now');
-    console.log('✅ Connected');
-    console.log('  version :', row.ver);
-    console.log('  host    :', row.host);
-    console.log('  time    :', row.now);
-    await pool.end();
-  } catch (e) {
-    console.error('❌ Connection failed:', e.message);
-    process.exit(1);
+    const conn = await pool.getConnection();
+    const [[ver]] = await conn.query('SELECT VERSION() AS version, @@hostname AS host, NOW() AS time');
+    const [[ssl]] = await conn.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'");
+    const cipher = ssl && ssl.Value ? ssl.Value : '';
+    console.log(`DB connected -> host=${host}:${port}  version=${ver.version}  ssl_cipher=${cipher || '(none)'}  TLS=${cipher ? 'ON' : 'OFF'}`);
+    conn.release();
+  } catch (err) {
+    console.error('DB connection diagnostic failed:', err && err.message ? err.message : err);
   }
 })();
+
+module.exports = pool;
+// ...existing code...

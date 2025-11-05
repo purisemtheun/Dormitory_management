@@ -3,59 +3,97 @@ const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 
+// โหลด env (ปลอดภัย ถ้ามีการโหลดก่อนแล้ว จะถูก ignore)
+try {
+  require('dotenv').config({ path: path.join(__dirname, '..', '.envlocal') });
+} catch (e) {}
+
+/* config */
 const host = process.env.DB_HOST || '127.0.0.1';
 const port = Number(process.env.DB_PORT || 3306);
+const user = process.env.DB_USER || 'root';
+const password = process.env.DB_PASSWORD || '';
+const database = process.env.DB_NAME || 'dormitory_management';
 
 function readCA() {
-  let ca = (process.env.DB_SSL_CA || '').trim();
-  if (!ca) ca = (process.env.DB_CA || '').trim();
-  if (!ca && process.env.DB_CA_B64) {
-    try { ca = Buffer.from(process.env.DB_CA_B64, 'base64').toString('utf8').trim(); } catch {}
+  const file = process.env.DB_SSL_CA_FILE;
+  if (!file) return null;
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return null;
   }
-  if (!ca) {
-    const filePath = process.env.DB_SSL_CA_FILE || path.join(__dirname, 'aiven-ca.pem'); // ชี้ไฟล์ Aiven
-    try { ca = fs.readFileSync(filePath, 'utf8').trim(); } catch {}
-  }
-  if (ca && ca.includes('\\n')) ca = ca.replace(/\\n/g, '\n');
-  return ca || null;
 }
 
 const cfg = {
   host,
   port,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'dormitory_management',
+  user,
+  password,
+  database,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: Number(process.env.DB_CONN_LIMIT || 10),
   queueLimit: 0,
   charset: 'utf8mb4',
   timezone: 'Z',
 };
 
-// ENABLE SSL when explicitly requested or for known hosts (e.g. Aiven)
+// If DB_SSL=1 or known host (Aiven), attach ssl options.
+// To REQUIRE SSL set DB_SSL=1 and provide DB_SSL_CA_FILE.
+// If using self-signed CA in dev, DB_ALLOW_SELF_SIGNED=1 will set rejectUnauthorized=false.
 if (process.env.DB_SSL === '1' || /aivencloud\.com$/i.test(host)) {
   const ca = readCA();
-
-  // Allow self-signed certs in non-production or when explicitly allowed via env.
-  // WARNING: DB_ALLOW_SELF_SIGNED=1 should NOT be used in production.
   const allowSelfSigned = process.env.DB_ALLOW_SELF_SIGNED === '1' || process.env.NODE_ENV !== 'production';
 
+  // mysql2 expects 'ssl' object; include ca as string
   cfg.ssl = {
-    minVersion: 'TLSv1.2',
-    servername: host, // SNI
-    // If CA is present use it; otherwise, optionally accept self-signed certs.
+    // include CA only if present
     ...(ca ? { ca } : {}),
-    // rejectUnauthorized = false will accept self-signed certs.
+    // SNI servername helps when connecting to cloud providers
+    servername: host,
+    // rejectUnauthorized true enforces server cert verification
     rejectUnauthorized: !allowSelfSigned,
+    minVersion: 'TLSv1.2',
   };
 
-  if (!ca && allowSelfSigned) {
-    console.warn('DB SSL: no CA provided — allowing self-signed certificates (DB_ALLOW_SELF_SIGNED=1 or NODE_ENV!=production).');
-  } else if (!ca && !allowSelfSigned) {
-    console.warn('DB SSL: no CA provided and self-signed certs not allowed — connection may fail (set DB_CA / DB_SSL_CA or DB_ALLOW_SELF_SIGNED=1 for dev).');
+  if (!ca && !allowSelfSigned) {
+    console.warn('DB SSL: no CA provided and self-signed not allowed — connection may fail.');
+  } else if (!ca && allowSelfSigned) {
+    console.warn('DB SSL: no CA provided — allowing self-signed certs (dev only).');
   }
 }
 
-module.exports = mysql.createPool(cfg);
+const pool = mysql.createPool(cfg);
+module.exports = pool;
+
+// quick diagnostic to know whether SSL was negotiated
+(async () => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      // GET ssl cipher used by session: returns empty string if no SSL
+      const [rows] = await conn.query("SELECT @@ssl_cipher AS ssl_cipher, @@version_comment AS version_comment, @@version AS version");
+      const info = rows && rows[0] ? rows[0] : {};
+      const cipher = info.ssl_cipher || '';
+      console.log('Using host/port :', host, port, 'SSL=', cipher ? 'ON' : 'OFF');
+      console.log('✅ Connected');
+      console.log('  version :', info.version || '(unknown)');
+      if (cipher) console.log('  ssl cipher:', cipher);
+      else console.log('  ssl cipher: (none)');
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    // surface helpful messages
+    if (err && err.code === 'ER_ACCESS_DENIED_ERROR') {
+      console.error('❌ DB access denied: check DB_USER/DB_PASSWORD/DB_HOST/DB_PORT in backend/.envlocal');
+    } else if (err && (err.message || '').includes('self-signed')) {
+      console.error('❌ DB SSL error:', err.message);
+      console.error('   For dev: set DB_ALLOW_SELF_SIGNED=1 or provide DB_SSL_CA_FILE with the provider CA.');
+    } else {
+      console.error('❌ DB connection error:', err && err.message ? err.message : err);
+    }
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+  }
+})();
 // ...existing code...
