@@ -7,11 +7,12 @@ const { ensureLineTables } = require("../controllers/lineController");
 
 const router = express.Router();
 
+// เผื่อเข้ามา GET ตรวจสุขภาพง่าย ๆ
+router.get("/", (_req, res) => res.status(200).send("LINE webhook alive"));
+
 function getRawBodyString(req) {
   if (Buffer.isBuffer(req.body)) return req.body.toString();
   if (typeof req.body === "string") return req.body;
-  // ถ้า middleware แปลงเป็น object แล้ว เราจะ stringify ใหม่ (อาจทำให้ verify ล้มเหลวได้)
-  // กรณี production แนะนำใช้ express.raw() สำหรับ path นี้
   return JSON.stringify(req.body || {});
 }
 
@@ -47,23 +48,13 @@ router.post("/", async (req, res) => {
       const replyToken = ev.replyToken;
       console.log(`[LINE webhook] from=${userId} text="${text}"`);
 
-      // quick ping
-      if (/^ping$/i.test(text)) {
-        await replyMessage(replyToken, "pong ✅");
-        continue;
-      }
-      // show my id
-      if (/^(myid|ไอดี)$/i.test(text)) {
-        await replyMessage(replyToken, `Your LINE userId: ${userId || "-"}`);
-        continue;
-      }
+      if (/^ping$/i.test(text)) { await replyMessage(replyToken, "pong ✅"); continue; }
+      if (/^(myid|ไอดี)$/i.test(text)) { await replyMessage(replyToken, `Your LINE userId: ${userId || "-"}`); continue; }
 
-      // LINK code: "LINK ABC123" / "ลิงก์ ABC123" / "ABC123"
       const m = text.match(/^(?:LINK|ลิงก์)?\s*([A-HJ-NP-Z2-9]{6})$/i);
       if (m) {
         const code = m[1].toUpperCase();
 
-        // 1) หาโค้ด
         const [rows] = await db.query(
           `SELECT tenant_id, expires_at, used_at
              FROM link_tokens
@@ -79,7 +70,6 @@ router.post("/", async (req, res) => {
           await replyMessage(replyToken, "⏰ โค้ดหมดอายุแล้ว กรุณาขอใหม่"); continue;
         }
 
-        // 2) ยืนยัน tenant
         const tenantKey = token.tenant_id;
         const [[found]] = await db.query(
           `SELECT t.tenant_id, t.user_id, t.room_id, r.room_number
@@ -91,7 +81,6 @@ router.post("/", async (req, res) => {
         );
         if (!found) { await replyMessage(replyToken, "❌ ไม่พบผู้เช่าในระบบ"); continue; }
 
-        // 3) บันทึก mapping 1:1 (unique ทั้ง tenant_id และ line_user_id)
         await db.query(
           `INSERT INTO tenant_line_links (tenant_id, line_user_id, linked_at)
            VALUES (?, ?, NOW())
@@ -101,10 +90,8 @@ router.post("/", async (req, res) => {
           [tenantKey, userId]
         );
 
-        // 4) ปิดโค้ด
         await db.query("UPDATE link_tokens SET used_at = NOW(), used = 1 WHERE code = ? LIMIT 1", [code]);
 
-        // 5) ตอบกลับ
         const [[info]] = await db.query(
           `SELECT t.tenant_id, COALESCE(u.fullname, u.name) AS fullname, r.room_number
              FROM tenants t
@@ -122,15 +109,14 @@ router.post("/", async (req, res) => {
         continue;
       }
 
-      // echo ทั่วไป
       await replyMessage(replyToken, `รับแล้ว: ${text}`);
     }
 
     console.log(`[LINE webhook] ok in ${Date.now() - t0}ms`);
-    res.status(200).end(); // ตอบ 200 เสมอ กัน LINE ยิงซ้ำ
+    res.status(200).end();
   } catch (err) {
     console.error("LINE webhook error:", err?.stack || err);
-    res.status(200).end(); // กัน retry
+    res.status(200).end();
   }
 });
 

@@ -1,10 +1,10 @@
-// controllers/repairController.js
 const db = require("../config/db");
 const STATUS = require("./repairStatus");
-const { pushLineAfterNotification } = require("../services/notifyAfterInsert");
+const { pushLineAfterNotification } = require("../services/notifyAfterInsert"); // ✅ ยิงไลน์
+const { createNotification } = require("../services/notification");             // ✅ บันทึกแจ้งเตือนในแอป
 
 /* ======================================================
- * 1) สร้างใบแจ้งซ่อม (รองรับ due_date)
+ * 1) สร้างใบแจ้งซ่อม (รองรับ due_date) + แจ้งไลน์ผู้เช่า
  * ====================================================== */
 exports.createRepair = async (req, res) => {
   try {
@@ -41,12 +41,11 @@ exports.createRepair = async (req, res) => {
 
     const effectiveRoomId = room_id || tenant_room_id || null;
 
-    // YYYY-MM-DD หรือ null (รองรับชื่อ deadline จากฟอร์มเก่า)
     const rawDue = due_date || deadline || null;
     const dueDateVal =
       typeof rawDue === "string" && /^\d{4}-\d{2}-\d{2}/.test(rawDue) ? rawDue : null;
 
-    await db.query(
+    const [ins] = await db.query(
       `INSERT INTO repairs
          (room_id, tenant_id, title, description, image_url, due_date, status, created_at, updated_at)
        VALUES
@@ -54,7 +53,24 @@ exports.createRepair = async (req, res) => {
       [effectiveRoomId, tenant_id, title, description, finalImageUrl, dueDateVal, STATUS.NEW]
     );
 
-    res.status(201).json({ message: "สร้างใบแจ้งซ่อมสำเร็จ" });
+    // 🔔 แจ้งเตือนในระบบ + ยิงไลน์ให้ผู้เช่า (รับเรื่องแล้ว)
+    if (tenant_id) {
+      const payload = {
+        tenant_id,
+        type: 'repair_created',
+        title: '📮 รับเรื่องแจ้งซ่อมแล้ว',
+        body: effectiveRoomId
+              ? `งาน "${title}" (${effectiveRoomId}) ได้รับเรื่องแล้ว`
+              : `งาน "${title}" ได้รับเรื่องแล้ว`,
+        ref_type: 'repair',
+        ref_id: ins.insertId,
+        created_by: userId ?? null,
+      };
+      await createNotification(payload);
+      await pushLineAfterNotification(null, payload); // ✅ ยิงไลน์
+    }
+
+    res.status(201).json({ message: "สร้างใบแจ้งซ่อมสำเร็จ", repair_id: ins.insertId });
   } catch (err) {
     console.error("❌ createRepair error:", err);
     res.status(500).json({ message: "เกิดข้อผิดพลาดในการสร้างใบแจ้งซ่อม" });
@@ -165,7 +181,6 @@ exports.updateRepair = async (req, res) => {
 
 /* ======================================================
  * 5) ลบงาน (admin/manager/staff)
- *    - ถ้าติด FK จะเปลี่ยนเป็น cancelled แทน (กัน 500)
  * ====================================================== */
 exports.deleteRepair = async (req, res) => {
   try {
@@ -219,7 +234,7 @@ exports.assignRepair = async (req, res) => {
     const techId = req.body.assigned_to ?? req.body.technician_id;
     if (!techId) return res.status(400).json({ error: "ต้องระบุ assigned_to" });
 
-    const [chk] = await db.query("SELECT status FROM repairs WHERE repair_id = ? LIMIT 1", [id]);
+    const [chk] = await db.query("SELECT status, tenant_id, room_id, title FROM repairs WHERE repair_id = ? LIMIT 1", [id]);
     if (!chk.length) return res.status(404).json({ message: "ไม่พบงานซ่อมนี้" });
 
     await db.query(
@@ -228,6 +243,22 @@ exports.assignRepair = async (req, res) => {
         WHERE repair_id = ?`,
       [Number(techId), STATUS.ASSIGNED, id]
     );
+
+    // (ออปชัน) แจ้งผู้เช่าว่างานถูกมอบหมายแล้ว
+    if (chk[0].tenant_id) {
+      const payload = {
+        tenant_id: chk[0].tenant_id,
+        type: 'repair_updated',
+        title: 'งานซ่อมถูกมอบหมายแล้ว',
+        body: chk[0].title
+              ? `งาน "${chk[0].title}" (${chk[0].room_id || "-"}) กำลังดำเนินการ`
+              : `งานซ่อม (${chk[0].room_id || "-"}) กำลังดำเนินการ`,
+        ref_type: 'repair',
+        ref_id: id,
+      };
+      await createNotification(payload);
+      await pushLineAfterNotification(null, payload);
+    }
 
     res.json({ message: "มอบหมายงานให้ช่างสำเร็จ" });
   } catch (err) {
@@ -273,7 +304,6 @@ exports.techSetStatus = async (req, res) => {
     const techId = req.user.id;
     const { action, status } = req.body || {};
 
-    // map action/status → constant
     let wantStatus = null;
     if (action === "start" || String(status || "").toLowerCase() === "in_progress") {
       wantStatus = STATUS.IN_PROGRESS ?? "in_progress";
@@ -282,7 +312,6 @@ exports.techSetStatus = async (req, res) => {
     }
     if (!wantStatus) return res.status(400).json({ error: "action ต้องเป็น start หรือ complete" });
 
-    // ตรวจสิทธิ์เจ้าของงาน
     const [own] = await db.query(
       `SELECT status
          FROM repairs
@@ -331,26 +360,18 @@ exports.techSetStatus = async (req, res) => {
         [repairId]
       );
       if (info?.tenant_id) {
-        const type = "repair_updated";
-        const title = "งานซ่อมเสร็จแล้ว";
-        const body = info.title
-          ? `งาน "${info.title}" (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`
-          : `งานซ่อม (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`;
-
-        await db.query(
-          `INSERT INTO notifications
-             (tenant_id, type, title, body, ref_type, ref_id, status, created_at)
-           VALUES
-             (?, ?, ?, ?, 'repair', ?, 'unread', NOW())`,
-          [info.tenant_id, type, title, body, repairId]
-        );
-
-        await pushLineAfterNotification(null, {
+        const payload = {
           tenant_id: info.tenant_id,
-          type,
-          title,
-          body,
-        });
+          type: "repair_updated",
+          title: "งานซ่อมเสร็จแล้ว",
+          body: info.title
+            ? `งาน "${info.title}" (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`
+            : `งานซ่อม (${info.room_id || "-"}) เสร็จสิ้นเรียบร้อย`,
+          ref_type: 'repair',
+          ref_id: repairId,
+        };
+        await createNotification(payload);
+        await pushLineAfterNotification(null, payload); // ✅ ยิงไลน์
       }
     }
 

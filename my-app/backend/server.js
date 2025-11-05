@@ -4,17 +4,13 @@ const express = require('express');
 const cors = require('cors');
 
 /* ==================== Load env ==================== */
-// dev เท่านั้น; บน Render จะฉีด ENV เอง
 if (process.env.NODE_ENV !== 'production') {
-  // หมายเหตุ: ไฟล์ของคุณชื่อ ".envlocal"
-  // ถ้าใช้ ".env.local" ให้แก้ path ตรงนี้
   require('dotenv').config({ path: path.join(__dirname, '.envlocal') });
 }
 
 const app = express();
 
 /* ==================== DB connect ==================== */
-// เพียง require เพื่อให้ config/db.js สร้าง pool และเชื่อมต่อ
 require('./config/db');
 
 /* ==================== Middlewares ==================== */
@@ -36,15 +32,22 @@ app.use(
   })
 );
 
-// Parsers
+/* ====== IMPORTANT: mount RAW for LINE webhook BEFORE json/urlencoded ====== */
+const LINE_WEBHOOK_PATH = process.env.LINE_WEBHOOK_PATH || '/webhooks/line';
+app.use(
+  LINE_WEBHOOK_PATH,
+  express.raw({ type: '*/*', limit: '2mb' }),
+  require('./routes/lineWebhook')
+);
+
+// ปกติทุก route อื่นใช้ JSON
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-/* ==================== DEBUG ROUTES (ต้องอยู่ก่อน catch-all/404) ==================== */
-// แนะนำ: ปิดใน production หากไม่ต้องการเปิดเผยข้อมูลระบบ
+/* ==================== DEBUG ROUTES ==================== */
 app.use('/api/debug', require('./routes/debug'));
 
 /* ==================== API Routes ==================== */
@@ -63,7 +66,7 @@ app.get('/api', (_req, res) => {
 
 // Public
 app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/line', require('./routes/lineRoutes'));
+app.use('/api/line', require('./routes/lineRoutes')); // <— ใช้ไฟล์ที่แก้ด้านล่าง
 
 // Protected groups
 app.use('/api/repairs', require('./routes/repairRoutes'));
@@ -87,14 +90,9 @@ app.get(
   repairController.listTechnicians
 );
 
-/* ==================== Debts (admin/staff) ==================== */
-/* สำคัญ: ให้ path ตรงกับฝั่งหน้าเว็บ (/api/admin/debts/...)
- * และอย่าใส่ verifyToken/authorize ที่นี่ซ้ำ เพราะมีใน routes/debtRoutes.js อยู่แล้ว
- */
+/* ==================== Debts ==================== */
 const debtRoutes = require('./routes/debtRoutes');
 app.use('/api/admin/debts', debtRoutes);
-
-// (ออปชัน) เผื่อของเก่ายังเรียก /api/debts → ทำ alias ไว้ด้วย
 app.use('/api/debts', debtRoutes);
 
 // Legacy
@@ -103,8 +101,6 @@ app.get('/api/invoices', verifyToken, paymentCtrl.getMyLastInvoices);
 /* ==================== Serve React build ==================== */
 const CLIENT_BUILD = path.join(__dirname, 'build');
 app.use(express.static(CLIENT_BUILD));
-
-// ใช้ RegExp กัน /api ไม่ให้ถูกจับโดย SPA fallback
 app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(CLIENT_BUILD, 'index.html'));
 });
@@ -122,5 +118,5 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ==================== Start ==================== */
-const PORT = process.env.PORT || 3000; // Render จะกำหนด PORT เอง
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

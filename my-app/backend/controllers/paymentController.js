@@ -6,6 +6,7 @@
 const path = require('path');
 const db = require('../config/db');
 const { createNotification } = require('../services/notification');
+const { pushLineAfterNotification } = require('../services/notifyAfterInsert'); // ✅ ยิงไลน์ทันที
 
 /* ------------------------------------------------------------------ */
 /* Helper: หา tenant_id ของ user ปัจจุบัน                              */
@@ -175,7 +176,6 @@ async function getActiveQR(_req, res) {
 /**
  * POST /api/payments/submit (multipart/form-data)
  * body: { invoice_id? OR invoice_no?, transfer_date?, note? } + file 'slip'
- * ➜ รองรับทั้ง invoice_id และ invoice_no
  * ➜ ล็อกยอด payments = ยอดบิล, ตั้ง invoices.status='pending'
  */
 async function submitPayment(req, res) {
@@ -254,7 +254,7 @@ async function submitPayment(req, res) {
 
 /**
  * PATCH /api/admin/payments/:id/approve
- * ✅ แจ้ง LINE ผ่าน createNotification (ถ้าตั้งค่าไว้)
+ * ✅ แจ้ง LINE ผ่าน createNotification + pushLineAfterNotification
  */
 async function approvePayment(req, res) {
   const paymentId = req.params.id;
@@ -322,13 +322,15 @@ async function approvePayment(req, res) {
       [paymentId]
     );
     if (info?.tenant_id) {
-      await createNotification({
+      const payload = {
         tenant_id: info.tenant_id,
         type: 'payment_approved',
         title: '✅ ชำระเงินอนุมัติแล้ว',
         body: `บิล ${info.invoice_no ?? ''}\nรอบบิล ${info.period_ym}\nยอดที่อนุมัติ ${Number(info.amount || 0).toLocaleString()} บาท`,
         created_by: req.user?.id ?? null,
-      }, conn);
+      };
+      await createNotification(payload, conn);
+      await pushLineAfterNotification(null, payload); // ✅ ยิงไลน์
     }
 
     if (conn.commit) await conn.commit();
@@ -397,13 +399,15 @@ async function rejectPayment(req, res) {
       [paymentId]
     );
     if (info?.tenant_id) {
-      await createNotification({
+      const payload = {
         tenant_id: info.tenant_id,
         type: 'payment_rejected',
         title: '❌ การชำระเงินถูกปฏิเสธ',
         body: `บิล ${info.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`,
         created_by: req.user?.id ?? null,
-      }, conn);
+      };
+      await createNotification(payload, conn);
+      await pushLineAfterNotification(null, payload); // ✅ ยิงไลน์
     }
 
     if (conn.commit) await conn.commit();

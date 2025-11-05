@@ -1,6 +1,6 @@
-// backend/controllers/adminController.js
 const db = require("../config/db");
 const { createNotification } = require("../services/notification");
+const { pushLineAfterNotification } = require("../services/notifyAfterInsert");
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_BASE_URL =
@@ -13,7 +13,6 @@ async function getConn() {
   return typeof db.getConnection === "function" ? await db.getConnection() : db;
 }
 
-// ดึงค่า tenant ที่ฟรอนต์อาจส่งมาหลายชื่อ (หยิบตัวแรกที่ไม่ว่าง)
 function pickTenantInput(req) {
   const b = req.body || {};
   const q = req.query || {};
@@ -25,7 +24,6 @@ function pickTenantInput(req) {
   return candidates[0] || null;
 }
 
-// สร้าง/เพิ่มเลขใบแจ้งหนี้แบบ atomic
 async function getNextInvoiceNo(conn) {
   await conn.query(`
     CREATE TABLE IF NOT EXISTS invoice_counter (
@@ -33,15 +31,9 @@ async function getNextInvoiceNo(conn) {
       last_no INT NOT NULL DEFAULT 0
     ) ENGINE=InnoDB
   `);
-  await conn.query(
-    `INSERT IGNORE INTO invoice_counter (id, last_no) VALUES (1, 0)`
-  );
-  await conn.query(
-    `UPDATE invoice_counter SET last_no = last_no + 1 WHERE id = 1`
-  );
-  const [[{ last_no }]] = await conn.query(
-    `SELECT last_no FROM invoice_counter WHERE id = 1`
-  );
+  await conn.query(`INSERT IGNORE INTO invoice_counter (id, last_no) VALUES (1, 0)`);
+  await conn.query(`UPDATE invoice_counter SET last_no = last_no + 1 WHERE id = 1`);
+  const [[{ last_no }]] = await conn.query(`SELECT last_no FROM invoice_counter WHERE id = 1`);
   return `D${String(last_no).padStart(4, "0")}`;
 }
 
@@ -59,13 +51,10 @@ function computeDueDate(periodYm, dueDateDay) {
   return `${y}-${mm}-${dd}`;
 }
 
-/* ---- ตัวช่วยแกะ label ไทย ---- */
 function extractNameAndRoom(label) {
   const text = String(label || "").trim();
-  // รองรับ "สมศรี กำใจ — ห้อง A102", "สมศรี กำใจ—ห้องA102", "สมศรี กำใจ — ห้อง -"
   const m = text.match(/^(.+?)\s*—\s*ห้อง\s*([^\s]+)?/);
   if (m) return { name: m[1].trim(), room: (m[2] || "").trim() };
-  // เผื่อกรณีมีวงเล็บรหัส
   const m2 = text.match(/^\s*(.+?)\s*(?:\(|\[)?T\d{3,5}(?:\)|\])?/i);
   return { name: (m2?.[1] || text).trim(), room: "" };
 }
@@ -84,26 +73,20 @@ async function getLatestTenantByUser(conn, userId) {
   return row?.tenant_id || null;
 }
 
-/** แปลง input (tenant_id / user_id / label ไทย / embedded Txxxx) → tenant_id จริง */
 async function resolveTenantId(conn, input) {
   if (!input) return null;
   const raw = String(input).trim();
 
-  // 0) ถ้าเป็น tenant_id ตรง
   if (/^T\d{3,5}$/i.test(raw)) return raw.toUpperCase();
 
-  // 1) ถ้ามี Txxxx แทรกในข้อความ
   const embed = raw.match(/T\d{3,5}/i);
   if (embed) return embed[0].toUpperCase();
 
-  // 2) ถ้าเป็น user_id ตัวเลข
   if (/^\d+$/.test(raw)) return await getLatestTenantByUser(conn, Number(raw));
 
-  // 3) เป็น label ไทย → แตก name/room
   const { name, room } = extractNameAndRoom(raw);
   if (!name) return null;
 
-  // หา user โดย name/fullname (ทั้งแบบ = และ LIKE)
   const [users] = await conn.query(
     `SELECT id FROM users
       WHERE (name COLLATE utf8mb4_unicode_ci = ?
@@ -139,7 +122,6 @@ async function resolveTenantId(conn, input) {
     if (tid) return tid;
   }
 
-  // 4) เผื่อชื่อ+ห้องชัด แต่ user ไม่ match แบบตรง
   if (room && room !== "-") {
     const [[t2]] = await conn.query(
       `SELECT t.tenant_id
@@ -158,7 +140,6 @@ async function resolveTenantId(conn, input) {
     if (t2?.tenant_id) return t2.tenant_id;
   }
 
-  // 5) Fallback สุดท้าย: ถ้าระบบมี tenant เดียว ให้ใช้คนนั้น (กันกรณีฐานใหม่มี T0001 คนเดียว)
   const [all] = await conn.query(
     `SELECT tenant_id FROM tenants WHERE (is_deleted=0 OR is_deleted IS NULL) LIMIT 2`
   );
@@ -169,7 +150,6 @@ async function resolveTenantId(conn, input) {
 
 /* ================= Endpoints ================= */
 
-// GET /api/admin/invoices?limit=10
 async function listRecentInvoices(req, res) {
   try {
     const limit = Math.min(parseInt(req.query.limit || "10", 10), 50);
@@ -210,7 +190,6 @@ async function listRecentInvoices(req, res) {
   }
 }
 
-// GET /api/admin/invoices/pending
 async function getPendingInvoices(_req, res) {
   try {
     const [rows] = await db.query(`
@@ -247,7 +226,6 @@ async function getPendingInvoices(_req, res) {
   }
 }
 
-// (เสริม) GET /api/admin/tenant-options  — ให้ฟรอนต์โหลด dropdown แบบ value=tenant_id
 async function getTenantOptions(_req, res) {
   try {
     const [rows] = await db.query(`
@@ -267,7 +245,6 @@ async function getTenantOptions(_req, res) {
   }
 }
 
-// POST /api/admin/invoices  (ใช้กับหน้าออกใบแจ้งหนี้)
 async function createInvoice(req, res) {
   const conn = await getConn();
   try {
@@ -286,15 +263,12 @@ async function createInvoice(req, res) {
 
     if (conn.beginTransaction) await conn.beginTransaction();
 
-    // แปลง input -> tenant_id จริง (รองรับหลายคีย์ + fallback tenant เดียว)
     const tenantRaw = pickTenantInput(req);
     const effectiveTenantId = await resolveTenantId(conn, tenantRaw);
 
     if (!effectiveTenantId) {
       if (conn.rollback) await conn.rollback();
-      return res
-        .status(400)
-        .json({ error: "invalid tenant (กรุณาเลือกผู้เช่าที่ถูกต้อง)" });
+      return res.status(400).json({ error: "invalid tenant (กรุณาเลือกผู้เช่าที่ถูกต้อง)" });
     }
 
     const [[t]] = await conn.query(
@@ -313,9 +287,7 @@ async function createInvoice(req, res) {
     const rent = Number(rent_amount) || 0;
     const water = Number(water_amount) || 0;
     const elec  = Number(electric_amount) || 0;
-    const total = Number.isFinite(Number(amount))
-      ? Number(amount)
-      : rent + water + elec;
+    const total = Number.isFinite(Number(amount)) ? Number(amount) : rent + water + elec;
     if (!(total > 0)) {
       if (conn.rollback) await conn.rollback();
       return res.status(400).json({ error: "invalid amount" });
@@ -335,16 +307,15 @@ async function createInvoice(req, res) {
        total, finalDue, rent, water, elec]
     );
 
-    await createNotification(
-      {
-        tenant_id: effectiveTenantId,
-        type: "invoice_created",
-        title: "📄 ใบแจ้งหนี้ใหม่",
-        body: `รอบบิล ${period_ym}\nยอดชำระ ${total.toLocaleString()} บาท`,
-        created_by: req.user?.id ?? null,
-      },
-      conn
-    );
+    const payload = {
+      tenant_id: effectiveTenantId,
+      type: "invoice_created",
+      title: "📄 ใบแจ้งหนี้ใหม่",
+      body: `รอบบิล ${period_ym}\nยอดชำระ ${total.toLocaleString()} บาท`,
+      created_by: req.user?.id ?? null,
+    };
+    await createNotification(payload, conn);
+    await pushLineAfterNotification(null, payload);
 
     if (conn.commit) await conn.commit();
 
@@ -368,7 +339,6 @@ async function createInvoice(req, res) {
   }
 }
 
-// POST /api/admin/invoices/generate-month
 async function generateMonth(req, res) {
   const { period_ym, amount_default, due_date_day, water_default, electric_default } =
     req.body || {};
@@ -429,16 +399,15 @@ async function generateMonth(req, res) {
       );
       createdCount++;
 
-      await createNotification(
-        {
-          tenant_id: t.tenant_id,
-          type: "invoice_generated",
-          title: "ออกใบแจ้งหนี้ประจำงวด",
-          body: `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${total.toLocaleString()} บาท | ครบกำหนด ${due_date}`,
-          created_by: req.user?.id ?? null,
-        },
-        conn
-      );
+      const payload = {
+        tenant_id: t.tenant_id,
+        type: "invoice_generated",
+        title: "ออกใบแจ้งหนี้ประจำงวด",
+        body: `งวด ${month} | รหัสบิล ${invoice_no} | ยอด ${total.toLocaleString()} บาท | ครบกำหนด ${due_date}`,
+        created_by: req.user?.id ?? null,
+      };
+      await createNotification(payload, conn);
+      await pushLineAfterNotification(null, payload);
     }
 
     if (conn.commit) await conn.commit();
@@ -452,7 +421,7 @@ async function generateMonth(req, res) {
   }
 }
 
-// PATCH /api/admin/invoices/:id/decision
+/* ========= ✅ อนุมัติ/ปฏิเสธ (ใช้เส้นทางเดิมของ Frontend) ========= */
 async function decideInvoice(req, res) {
   const conn = await getConn();
   try {
@@ -526,18 +495,17 @@ async function decideInvoice(req, res) {
         [invoiceId]
       );
 
-      await createNotification(
-        {
-          tenant_id: inv.tenant_id,
-          type: "payment_approved",
-          title: "✅ ชำระเงินอนุมัติแล้ว",
-          body: `บิล ${inv.invoice_no} | ยอด ${Number(inv.amount || 0).toLocaleString()} บาท | วันที่ ${new Date()
-            .toISOString()
-            .slice(0, 10)}`,
-          created_by: req.user?.id ?? approved_by ?? null,
-        },
-        conn
-      );
+      const payload = {
+        tenant_id: inv.tenant_id,
+        type: "payment_approved",
+        title: "✅ ชำระเงินอนุมัติแล้ว",
+        body: `บิล ${inv.invoice_no} | ยอด ${Number(inv.amount || 0).toLocaleString()} บาท | วันที่ ${new Date()
+          .toISOString()
+          .slice(0, 10)}`,
+        created_by: req.user?.id ?? approved_by ?? null,
+      };
+      await createNotification(payload, conn);
+      await pushLineAfterNotification(null, payload);
 
       if (conn.commit) await conn.commit();
       return res.json({
@@ -567,16 +535,15 @@ async function decideInvoice(req, res) {
       [invoiceId]
     );
 
-    await createNotification(
-      {
-        tenant_id: inv.tenant_id,
-        type: "payment_rejected",
-        title: "การชำระเงินถูกปฏิเสธ",
-        body: `บิล ${inv.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`,
-        created_by: req.user?.id ?? null,
-      },
-      conn
-    );
+    const payload = {
+      tenant_id: inv.tenant_id,
+      type: "payment_rejected",
+      title: "การชำระเงินถูกปฏิเสธ",
+      body: `บิล ${inv.invoice_no} | โปรดอัปโหลดสลิปใหม่หรือชำระอีกครั้ง`,
+      created_by: req.user?.id ?? null,
+    };
+    await createNotification(payload, conn);
+    await pushLineAfterNotification(null, payload);
 
     if (conn.commit) await conn.commit();
     return res.json({
@@ -594,10 +561,9 @@ async function decideInvoice(req, res) {
   }
 }
 
-// PATCH /api/admin/invoices/:id/cancel
 async function cancelInvoice(req, res) {
   try {
-    const key = req.params.id; // id หรือ invoice_no
+    const key = req.params.id;
     const useInvoiceNo = /^[A-Za-z]/.test(String(key));
 
     const [found] = await db.query(
@@ -625,13 +591,15 @@ async function cancelInvoice(req, res) {
         .json({ error: "invoice not found or not cancellable" });
     }
 
-    await createNotification({
+    const payload = {
       tenant_id: inv.tenant_id,
       type: "invoice_canceled",
       title: "ยกเลิกใบแจ้งหนี้",
       body: `บิล ${inv.invoice_no} ถูกยกเลิกแล้ว`,
       created_by: req.user?.id ?? null,
-    });
+    };
+    await createNotification(payload);
+    await pushLineAfterNotification(null, payload);
 
     res.json({ ok: true });
   } catch (e) {
@@ -640,7 +608,6 @@ async function cancelInvoice(req, res) {
   }
 }
 
-// POST /api/admin/invoices/:id/resend
 async function resendInvoiceNotification(req, res) {
   try {
     const id = req.params.id;
@@ -651,7 +618,7 @@ async function resendInvoiceNotification(req, res) {
     );
     if (!inv) return res.status(404).json({ error: "invoice not found" });
 
-    await createNotification({
+    const payload = {
       tenant_id: inv.tenant_id,
       type: "invoice_generated",
       title: "ออกใบแจ้งหนี้ประจำงวด",
@@ -659,7 +626,9 @@ async function resendInvoiceNotification(req, res) {
         inv.amount || 0
       ).toLocaleString()} บาท | ครบกำหนด ${inv.due_date ?? "-"}`,
       created_by: req.user?.id ?? null,
-    });
+    };
+    await createNotification(payload);
+    await pushLineAfterNotification(null, payload);
 
     res.json({ ok: true });
   } catch (e) {
@@ -671,10 +640,10 @@ async function resendInvoiceNotification(req, res) {
 module.exports = {
   listRecentInvoices,
   getPendingInvoices,
-  getTenantOptions,   // <— เสริมให้ฟรอนต์โหลด dropdown แบบ value=tenant_id
+  getTenantOptions,
   createInvoice,
   generateMonth,
-  decideInvoice,
+  decideInvoice,          // ✅ ใช้ปุ่มเดิมอนุมัติ/ปฏิเสธได้แล้ว
   cancelInvoice,
   resendInvoiceNotification,
 };
