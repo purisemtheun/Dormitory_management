@@ -1,17 +1,43 @@
 // backend/config/db.js
-const fs = require('fs');
-const mysql = require('mysql2/promise');
+"use strict";
+const fs = require("fs");
+const mysql = require("mysql2/promise");
 
-/* ===== SSL (ถ้ามี) ===== */
-const ssl =
-  process.env.DB_SSL && process.env.DB_SSL !== '0'
-    ? { ca: fs.readFileSync(process.env.DB_SSL_CA_FILE, 'utf8') }
-    : undefined;
+function bool(v) {
+  return String(v || "").toLowerCase() === "true" || String(v || "") === "1";
+}
 
-/* ===== สร้าง Pool โดย “บังคับ” ให้ใช้ UTF-8 เสมอ =====
- * - charset: กำหนด character set ระดับ connection
- * - เราจะสั่ง SET NAMES/SET collation_connection อีกชั้นหลังเชื่อมต่อ (กันพลาด)
- */
+function buildSSL() {
+  if (!bool(process.env.DB_SSL)) return undefined;
+
+  // 1) STRING PEM ใน ENV (แนะนำบน Render) – รองรับ \n ที่ถูก escape
+  if (process.env.DB_SSL_CA) {
+    const ca = process.env.DB_SSL_CA.replace(/\\n/g, "\n");
+    return { ca };
+  }
+
+  // 2) BASE64 PEM ใน ENV
+  if (process.env.DB_SSL_CA_B64) {
+    const ca = Buffer.from(process.env.DB_SSL_CA_B64, "base64").toString("utf8");
+    return { ca };
+  }
+
+  // 3) ไฟล์บนดิสก์ (ใช้เฉพาะตอนรันบนเครื่องเรา)
+  const p = process.env.DB_SSL_CA_FILE;
+  if (p && typeof p === "string") {
+    try {
+      const ca = fs.readFileSync(p, "utf8");
+      return { ca };
+    } catch (e) {
+      console.warn("[DB] Cannot read DB_SSL_CA_FILE:", p, e.message);
+    }
+  }
+
+  // 4) ถ้าเปิด DB_SSL ไว้แต่ไม่เจอ CA เลย ก็ปล่อย ssl object เปล่า
+  //    (หลายผู้ให้บริการยอมรับได้ หรือใช้ cert ของระบบ)
+  return {};
+}
+
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
@@ -19,59 +45,10 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10,
-  ssl,
-  charset: 'utf8mb4',           // สำคัญ
-  supportBigNumbers: true,
-  dateStrings: true,
+  connectionLimit: Number(process.env.DB_POOL || 10),
+  ssl: buildSSL(),
+  timezone: "Z", // เก็บเป็น UTC
 });
 
-/* ===== บังคับ session ให้เป็น utf8mb4_unicode_ci ทุกครั้งที่ยืม connection ===== */
-async function prepareSession(conn) {
-  // SET NAMES จะตั้ง character_set_client/connection/results ให้เป็น utf8mb4
-  await conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
-  await conn.query("SET collation_connection = 'utf8mb4_unicode_ci'");
-  // ตั้ง timezone ให้เหมาะ (ปรับตามต้องการ)
-  if (process.env.TZ || process.env.APP_TZ) {
-    const tz = process.env.APP_TZ || process.env.TZ;
-    await conn.query("SET time_zone = ?", [tz]);
-  }
-}
-
-pool.getConnection = (function (orig) {
-  return async function patchedGetConnection() {
-    const conn = await orig.call(this);
-    try {
-      await prepareSession(conn);
-    } catch (e) {
-      // ไม่ให้พังทั้งแอป ถ้าตั้ง session fail ก็ปล่อยไป แต่ log ไว้
-      console.warn('[db] prepareSession warning:', e?.message || e);
-    }
-    return conn;
-  };
-})(pool.getConnection);
-
-/* ===== Debug ตอนสตาร์ต: ตรวจฐาน, collation, และตารางสำคัญ ===== */
-(async () => {
-  const conn = await pool.getConnection();
-  try {
-    const [[info]] = await conn.query(
-      "SELECT DATABASE() AS db, VERSION() AS ver, @@character_set_server AS chs, @@collation_server AS col, @@hostname AS host, @@ssl_cipher AS cipher"
-    );
-    console.log('DB check =>', info);
-
-    const [[sess]] = await conn.query(
-      "SELECT @@character_set_connection AS ch_conn, @@collation_connection AS col_conn"
-    );
-    console.log('Session charset/collation =>', sess);
-
-    const [users]   = await conn.query("SHOW TABLES LIKE 'users'");
-    const [tenants] = await conn.query("SHOW TABLES LIKE 'tenants'");
-    const [invs]    = await conn.query("SHOW TABLES LIKE 'invoices'");
-    console.log('Has users:', users.length > 0, '| tenants:', tenants.length > 0, '| invoices:', invs.length > 0);
-  } finally {
-    conn.release();
-  }
-})().catch(err => console.error('DB init check error:', err));
-
 module.exports = pool;
+module.exports.getConnection = () => pool.getConnection();
