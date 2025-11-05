@@ -43,53 +43,49 @@ async function recomputeRoomsStatus(q, roomIds = []) {
 /** GET /api/admin/tenants?q=...  (ค้นหาได้: T0001 / user_id / name / phone) */
 async function listTenants(req, res, next) {
   try {
-    const q = (req.query.q || '').trim();
-    const isTenantCode = /^T\d{4}$/i.test(q);
-    const isNumericUserId = /^\d+$/.test(q);
+    const q = (req.query.q || "").trim();
+    const like = `%${q}%`;
 
-    const pkT = pickKeyOf('t1');
-    const pkX = pickKeyOf('x');
+    // หมายเหตุ: ถ้าคอลัมน์ชื่อจริงเป็น fullname ให้แก้ u.name -> u.fullname
+    const sqlBase = `
+      SELECT
+        u.id        AS user_id,
+        u.name      AS name,
+        u.phone     AS phone,
+        t.tenant_id AS tenant_id,
+        t.room_id   AS room_id,
+        t.checkin_date
+      FROM users u
+      LEFT JOIN tenants t
+        ON t.user_id = u.id
+       AND t.is_deleted = 0
+      WHERE u.role = 'tenant'
+    `;
 
-    const sql =
-      "SELECT " +
-      "  u.id AS user_id, u.name, u.phone, " +
-      "  t1.tenant_id, t1.room_id, t1.checkin_date " +
-      "FROM users u " +
-      "LEFT JOIN ( " +
-      "  SELECT t1.* " +
-      "  FROM tenants t1 " +
-      "  JOIN ( " +
-      "    SELECT x.user_id, MAX(" + pkX + ") AS selkey " +
-      "    FROM tenants x WHERE x.is_deleted=0 GROUP BY x.user_id " +
-      "  ) pick ON pick.user_id = t1.user_id " +
-      "       AND " + pkT + " = pick.selkey " +
-      "  WHERE t1.is_deleted=0 " +
-      ") t1 ON t1.user_id = u.id " +
-      "WHERE u.role = 'tenant' " +
-      (q
-        ? (isTenantCode
-            ? "AND t1.tenant_id = ? "
-            : (isNumericUserId
-                ? "AND u.id = ? "
-                : "AND (u.name LIKE ? OR u.phone LIKE ?) "))
-        : "") +
-      "ORDER BY (t1.tenant_id IS NOT NULL) DESC, " +
-      "         COALESCE(t1.checkin_date,'9999-12-31') ASC, " +
-      "         u.id ASC";
-
+    let sql = sqlBase;
     const params = [];
+
     if (q) {
-      if (isTenantCode) params.push(q.toUpperCase());
-      else if (isNumericUserId) params.push(Number(q));
-      else { params.push(`%${q}%`); params.push(`%${q}%`); }
+      // ค้นหาง่าย ๆ ตามที่หน้าใช้: ชื่อ/เบอร์/room_id/user_id/tenant_id
+      sql += ` AND (
+        u.name LIKE ? OR
+        u.phone LIKE ? OR
+        t.room_id LIKE ? OR
+        CAST(u.id AS CHAR) LIKE ? OR
+        t.tenant_id LIKE ?
+      )`;
+      params.push(like, like, like, like, like);
     }
 
+    sql += ` ORDER BY u.id ASC`;
+
     const [rows] = await db.query(sql, params);
-    res.json(rows);
+    res.json(rows);          // คืน array ธรรมดา
   } catch (e) {
     next(e);
   }
 }
+module.exports.listTenants = listTenants;
 
 /* ------------------------------ Create tenant ---------------------------- */
 /** POST /api/admin/tenants  body: { name (required), phone?, checkin_date?, room_id? } */

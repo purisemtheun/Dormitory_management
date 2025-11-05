@@ -1,99 +1,77 @@
-// ...existing code...
-const mysql = require('mysql2/promise');
+// backend/config/db.js
 const fs = require('fs');
-const path = require('path');
+const mysql = require('mysql2/promise');
 
-// โหลด env (ปลอดภัย ถ้ามีการโหลดก่อนแล้ว จะถูก ignore)
-try {
-  require('dotenv').config({ path: path.join(__dirname, '..', '.envlocal') });
-} catch (e) {}
+/* ===== SSL (ถ้ามี) ===== */
+const ssl =
+  process.env.DB_SSL && process.env.DB_SSL !== '0'
+    ? { ca: fs.readFileSync(process.env.DB_SSL_CA_FILE, 'utf8') }
+    : undefined;
 
-/* config */
-const host = process.env.DB_HOST || '127.0.0.1';
-const port = Number(process.env.DB_PORT || 3306);
-const user = process.env.DB_USER || 'root';
-const password = process.env.DB_PASSWORD || '';
-const database = process.env.DB_NAME || 'dormitory_management';
-
-function readCA() {
-  const file = process.env.DB_SSL_CA_FILE;
-  if (!file) return null;
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch (e) {
-    return null;
-  }
-}
-
-const cfg = {
-  host,
-  port,
-  user,
-  password,
-  database,
+/* ===== สร้าง Pool โดย “บังคับ” ให้ใช้ UTF-8 เสมอ =====
+ * - charset: กำหนด character set ระดับ connection
+ * - เราจะสั่ง SET NAMES/SET collation_connection อีกชั้นหลังเชื่อมต่อ (กันพลาด)
+ */
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: Number(process.env.DB_CONN_LIMIT || 10),
-  queueLimit: 0,
-  charset: 'utf8mb4',
-  timezone: 'Z',
-};
+  connectionLimit: 10,
+  ssl,
+  charset: 'utf8mb4',           // สำคัญ
+  supportBigNumbers: true,
+  dateStrings: true,
+});
 
-// If DB_SSL=1 or known host (Aiven), attach ssl options.
-// To REQUIRE SSL set DB_SSL=1 and provide DB_SSL_CA_FILE.
-// If using self-signed CA in dev, DB_ALLOW_SELF_SIGNED=1 will set rejectUnauthorized=false.
-if (process.env.DB_SSL === '1' || /aivencloud\.com$/i.test(host)) {
-  const ca = readCA();
-  const allowSelfSigned = process.env.DB_ALLOW_SELF_SIGNED === '1' || process.env.NODE_ENV !== 'production';
-
-  // mysql2 expects 'ssl' object; include ca as string
-  cfg.ssl = {
-    // include CA only if present
-    ...(ca ? { ca } : {}),
-    // SNI servername helps when connecting to cloud providers
-    servername: host,
-    // rejectUnauthorized true enforces server cert verification
-    rejectUnauthorized: !allowSelfSigned,
-    minVersion: 'TLSv1.2',
-  };
-
-  if (!ca && !allowSelfSigned) {
-    console.warn('DB SSL: no CA provided and self-signed not allowed — connection may fail.');
-  } else if (!ca && allowSelfSigned) {
-    console.warn('DB SSL: no CA provided — allowing self-signed certs (dev only).');
+/* ===== บังคับ session ให้เป็น utf8mb4_unicode_ci ทุกครั้งที่ยืม connection ===== */
+async function prepareSession(conn) {
+  // SET NAMES จะตั้ง character_set_client/connection/results ให้เป็น utf8mb4
+  await conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+  await conn.query("SET collation_connection = 'utf8mb4_unicode_ci'");
+  // ตั้ง timezone ให้เหมาะ (ปรับตามต้องการ)
+  if (process.env.TZ || process.env.APP_TZ) {
+    const tz = process.env.APP_TZ || process.env.TZ;
+    await conn.query("SET time_zone = ?", [tz]);
   }
 }
 
-const pool = mysql.createPool(cfg);
-module.exports = pool;
-
-// quick diagnostic to know whether SSL was negotiated
-(async () => {
-  try {
-    const conn = await pool.getConnection();
+pool.getConnection = (function (orig) {
+  return async function patchedGetConnection() {
+    const conn = await orig.call(this);
     try {
-      // GET ssl cipher used by session: returns empty string if no SSL
-      const [rows] = await conn.query("SELECT @@ssl_cipher AS ssl_cipher, @@version_comment AS version_comment, @@version AS version");
-      const info = rows && rows[0] ? rows[0] : {};
-      const cipher = info.ssl_cipher || '';
-      console.log('Using host/port :', host, port, 'SSL=', cipher ? 'ON' : 'OFF');
-      console.log('✅ Connected');
-      console.log('  version :', info.version || '(unknown)');
-      if (cipher) console.log('  ssl cipher:', cipher);
-      else console.log('  ssl cipher: (none)');
-    } finally {
-      conn.release();
+      await prepareSession(conn);
+    } catch (e) {
+      // ไม่ให้พังทั้งแอป ถ้าตั้ง session fail ก็ปล่อยไป แต่ log ไว้
+      console.warn('[db] prepareSession warning:', e?.message || e);
     }
-  } catch (err) {
-    // surface helpful messages
-    if (err && err.code === 'ER_ACCESS_DENIED_ERROR') {
-      console.error('❌ DB access denied: check DB_USER/DB_PASSWORD/DB_HOST/DB_PORT in backend/.envlocal');
-    } else if (err && (err.message || '').includes('self-signed')) {
-      console.error('❌ DB SSL error:', err.message);
-      console.error('   For dev: set DB_ALLOW_SELF_SIGNED=1 or provide DB_SSL_CA_FILE with the provider CA.');
-    } else {
-      console.error('❌ DB connection error:', err && err.message ? err.message : err);
-    }
-    if (process.env.NODE_ENV === 'production') process.exit(1);
+    return conn;
+  };
+})(pool.getConnection);
+
+/* ===== Debug ตอนสตาร์ต: ตรวจฐาน, collation, และตารางสำคัญ ===== */
+(async () => {
+  const conn = await pool.getConnection();
+  try {
+    const [[info]] = await conn.query(
+      "SELECT DATABASE() AS db, VERSION() AS ver, @@character_set_server AS chs, @@collation_server AS col, @@hostname AS host, @@ssl_cipher AS cipher"
+    );
+    console.log('DB check =>', info);
+
+    const [[sess]] = await conn.query(
+      "SELECT @@character_set_connection AS ch_conn, @@collation_connection AS col_conn"
+    );
+    console.log('Session charset/collation =>', sess);
+
+    const [users]   = await conn.query("SHOW TABLES LIKE 'users'");
+    const [tenants] = await conn.query("SHOW TABLES LIKE 'tenants'");
+    const [invs]    = await conn.query("SHOW TABLES LIKE 'invoices'");
+    console.log('Has users:', users.length > 0, '| tenants:', tenants.length > 0, '| invoices:', invs.length > 0);
+  } finally {
+    conn.release();
   }
-})();
-// ...existing code...
+})().catch(err => console.error('DB init check error:', err));
+
+module.exports = pool;

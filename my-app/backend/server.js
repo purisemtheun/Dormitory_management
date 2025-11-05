@@ -70,8 +70,7 @@ app.use('/api/repairs', require('./routes/repairRoutes'));
 app.use('/api/rooms', require('./routes/roomRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
-app.use('/api/notifications', require('./routes/notifications'));
-
+app.use('/api', require('./routes/notifications'));
 // Admin dashboards
 app.use('/api/admin/proofs', require('./routes/admin.paymentProofs'));
 app.use('/api/admin/line', require('./routes/admin.line'));

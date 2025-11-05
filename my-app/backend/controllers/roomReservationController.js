@@ -1,8 +1,38 @@
 // backend/controllers/roomReservationController.js
 const db = require("../config/db");
 
-/* ===== สร้างรหัสจองถัดไป: RS0001, RS0002, ... ===== */
+/* ---------- Schema detector & mapper ---------- */
+let RESV_SCHEMA_CACHE = null;
+async function getResvSchema(conn = db) {
+  if (RESV_SCHEMA_CACHE) return RESV_SCHEMA_CACHE;
+  const [cols] = await conn.query(`SHOW COLUMNS FROM room_reservations`);
+  const names = new Set(cols.map(c => c.Field.toLowerCase()));
+
+  // legacy (localhost): reservation_id, reservation_code, updated_at
+  // new (Aiven dump):  id, (no code), decided_at/decided_by
+  const isLegacy = names.has("reservation_id");
+  const hasCode  = names.has("reservation_code");
+
+  RESV_SCHEMA_CACHE = {
+    isLegacy,
+    hasCode,
+    // primary key column
+    pk: isLegacy ? "reservation_id" : "id",
+    // time columns
+    hasUpdatedAt: names.has("updated_at"),
+    hasDecided: names.has("decided_at") || names.has("decided_by"),
+    // common columns we rely on
+    hasNote: names.has("note"),
+    // columns list for safety
+    cols: names
+  };
+  return RESV_SCHEMA_CACHE;
+}
+
+/* ===== next reservation code (only when table supports it) ===== */
 async function nextReservationCode() {
+  const schema = await getResvSchema();
+  if (!schema.hasCode) return null; // new schema ไม่มี code
   const [[row]] = await db.query(
     `SELECT MAX(CAST(SUBSTRING(reservation_code, 3) AS UNSIGNED)) AS maxn
        FROM room_reservations
@@ -12,12 +42,7 @@ async function nextReservationCode() {
   return "RS" + String(n).padStart(4, "0");
 }
 
-/** ========== POST /rooms/:roomId/reservations (TENANT) ==========
- * body: { note? }
- * - ตรวจห้องว่าง (อิง tenants เป็นหลัก)
- * - ห้ามผู้ใช้ที่มีห้องอยู่แล้วจองซ้ำ
- * - บันทึก room_reservations (status='pending')
- */
+/** ========== POST /rooms/:roomId/reservations (TENANT) ========== */
 exports.createReservation = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -59,57 +84,95 @@ exports.createReservation = async (req, res) => {
       return res.status(409).json({ error: "ห้องนี้ไม่ว่างแล้ว" });
     }
 
-    // สร้างคำขอ
-    const code = await nextReservationCode();            // ← ใช้ฟังก์ชันที่ถูกต้อง
+    const schema = await getResvSchema();
+    const code = await nextReservationCode();
     const note = String(req.body?.note || "").slice(0, 500) || null;
 
-    const [ins] = await db.query(
-      `INSERT INTO room_reservations
-         (reservation_code, user_id, room_id, note, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [code, userId, roomId, note]
-    );
+    // สร้าง SQL insert ให้เข้ากับ schema
+    let sql, params;
+    if (schema.isLegacy) {
+      // legacy: มี reservation_code, updated_at
+      sql = `INSERT INTO room_reservations
+               (reservation_code, user_id, room_id, note, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'pending', NOW(), NOW())`;
+      params = [code, userId, roomId, note];
+    } else {
+      // new: ไม่มี code/updated_at, มี decided_at/by (ปล่อย NULL)
+      if (schema.hasNote) {
+        sql = `INSERT INTO room_reservations
+                 (user_id, room_id, note, status, created_at)
+               VALUES (?, ?, ?, 'pending', NOW())`;
+        params = [userId, roomId, note];
+      } else {
+        sql = `INSERT INTO room_reservations
+                 (user_id, room_id, status, created_at)
+               VALUES (?, ?, 'pending', NOW())`;
+        params = [userId, roomId];
+      }
+    }
+
+    const [ins] = await db.query(sql, params);
+    const insertedId = schema.isLegacy ? ins.insertId : ins.insertId;
 
     return res
       .status(201)
-      .json({ ok: true, reservation_id: ins.insertId, reservation_code: code });
+      .json({
+        ok: true,
+        reservation_id: insertedId,
+        reservation_code: code, // อาจเป็น null ใน schema ใหม่ (ฟรอนต์ควรทนได้)
+      });
   } catch (e) {
     console.error("createReservation error:", e);
     res.status(500).json({ error: e.message || "Internal error" });
   }
 };
 
-/** ================= GET /rooms/reservations (ADMIN) ================= */
+/** ================= GET /rooms/reservations (ADMIN) =================
+ * query: ?status=pending|approved|rejected|canceled|all  (default 'pending')
+ *         &page=1&pageSize=10
+ */
 exports.listReservationsPending = async (req, res) => {
   try {
+    const statusQ = String(req.query.status || "pending").toLowerCase();
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize || "10", 10)));
     const offset = (page - 1) * pageSize;
 
-    const countSql = `SELECT COUNT(*) AS total FROM room_reservations r WHERE r.status = 'pending'`;
+    const schema = await getResvSchema();
+
+    const isAll = statusQ === "all";
+    const where = isAll ? "1=1" : "r.status = ?";
+    const whereParams = isAll ? [] : [statusQ];
+
+    const countSql = `SELECT COUNT(*) AS total FROM room_reservations r WHERE ${where}`;
+    const [countRows] = await db.query(countSql, whereParams);
+    const total = countRows[0]?.total || 0;
+
+    // สร้าง select ให้ได้ฟิลด์ที่ฟรอนต์ใช้ โดย map ชื่อคอลัมน์ตาม schema
+    const pk = schema.pk; // reservation_id หรือ id
+    const codeSel = schema.hasCode ? "r.reservation_code" : "NULL AS reservation_code";
+    const updatedSel = schema.hasUpdatedAt ? "r.updated_at" : "r.created_at AS updated_at";
+
     const dataSql = `
       SELECT
-        r.reservation_id,
-        r.reservation_code,
+        r.${pk}           AS reservation_id,
+        ${codeSel},
         r.user_id,
         r.room_id,
         r.status,
         r.created_at,
-        u.name         AS user_name,  -- แสดงชื่อผู้ใช้
-        u.email        AS email,
-        rm.room_number AS room_number
+        ${updatedSel},
+        u.name            AS user_name,
+        u.email           AS email,
+        rm.room_number    AS room_number
       FROM room_reservations r
       LEFT JOIN users u ON u.id = r.user_id
       LEFT JOIN rooms rm ON rm.room_id = r.room_id
-      WHERE r.status = 'pending'
-      ORDER BY r.created_at DESC, r.reservation_id DESC
+      WHERE ${where}
+      ORDER BY r.created_at DESC, r.${pk} DESC
       LIMIT ? OFFSET ?
     `;
-
-    const [[{ total }], [rows]] = await Promise.all([
-      db.query(countSql),
-      db.query(dataSql, [pageSize, offset]),
-    ]);
+    const [rows] = await db.query(dataSql, [...whereParams, pageSize, offset]);
 
     res.json({ data: rows, total, page, pageSize });
   } catch (err) {
@@ -128,12 +191,15 @@ exports.decideReservation = async (req, res) => {
       return res.status(400).json({ error: "action ต้องเป็น 'approve' หรือ 'reject'" });
     }
 
+    const schema = await getResvSchema(conn);
+    const pk = schema.pk;
+
     if (conn.beginTransaction) await conn.beginTransaction();
 
     const [[rv]] = await conn.query(
-      `SELECT reservation_id, user_id, room_id, status
+      `SELECT ${pk} AS reservation_id, user_id, room_id, status
          FROM room_reservations
-        WHERE reservation_id = ? FOR UPDATE`,
+        WHERE ${pk} = ? FOR UPDATE`,
       [id]
     );
     if (!rv) {
@@ -146,10 +212,9 @@ exports.decideReservation = async (req, res) => {
     }
 
     if (action === "reject") {
-      await conn.query(
-        `UPDATE room_reservations SET status='rejected', updated_at=NOW() WHERE reservation_id=?`,
-        [id]
-      );
+      const base = `UPDATE room_reservations SET status='rejected'`;
+      const tail = schema.hasUpdatedAt ? `, updated_at=NOW()` : (schema.hasDecided ? `, decided_at=NOW()` : ``);
+      await conn.query(`${base}${tail} WHERE ${pk}=?`, [id]);
       if (conn.commit) await conn.commit();
       return res.json({ ok: true, status: "rejected" });
     }
@@ -192,10 +257,13 @@ exports.decideReservation = async (req, res) => {
 
     await conn.query(`UPDATE rooms SET updated_at = NOW() WHERE room_id = ?`, [rv.room_id]);
 
-    await conn.query(
-      `UPDATE room_reservations SET status='approved', updated_at=NOW() WHERE reservation_id=?`,
-      [id]
-    );
+    const base = `UPDATE room_reservations SET status='approved'`;
+    const tail = schema.hasUpdatedAt
+      ? `, updated_at=NOW()`
+      : (schema.hasDecided ? `, decided_at=NOW(), decided_by=?` : ``);
+
+    const params = schema.hasDecided ? [req.user?.id ?? null, id] : [id];
+    await conn.query(`${base}${tail} WHERE ${pk}=?`, params);
 
     if (conn.commit) await conn.commit();
     return res.json({ ok: true, status: "approved", tenant_id: tenantId });

@@ -73,10 +73,30 @@ router.post(
 );
 
 /* ===== Tenants ===== */
-router.get('/tenants', adminTenantCtrl.listTenants);
-router.post('/tenants', adminTenantCtrl.createTenant);
-router.patch('/tenants/:id', adminTenantCtrl.updateTenant);
-router.delete('/tenants/:id', adminTenantCtrl.deleteTenant);
+router.get(
+  '/tenants',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  adminTenantCtrl.listTenants
+);
+router.post(
+  '/tenants',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  adminTenantCtrl.createTenant
+);
+router.patch(
+  '/tenants/:id',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  adminTenantCtrl.updateTenant
+);
+router.delete(
+  '/tenants/:id',
+  verifyToken,
+  authorizeRoles('admin','manager','staff'),
+  adminTenantCtrl.deleteTenant
+);
 
 /* ===== Debts ===== */
 router.get('/debts/summary', debtCtrl.getDebtSummary);

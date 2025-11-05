@@ -3,30 +3,33 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { verifyToken } = require('../middlewares/authMiddleware');
+const { ensureNotificationsTable } = require('../services/notification');
 
-/* helper: คืน tenant_id ของผู้ใช้ปัจจุบัน (ล่าสุด) */
+/* helper: คืน tenant_id ล่าสุดของผู้ใช้ */
 async function getMyTenantId(userId) {
   const [[t]] = await db.query(
     `SELECT tenant_id
        FROM tenants
       WHERE user_id = ?
-      ORDER BY checkin_date DESC
+      ORDER BY COALESCE(checkin_date,'0000-00-00') DESC, tenant_id DESC
       LIMIT 1`,
     [userId]
   );
   return t?.tenant_id || null;
 }
 
-/* ============================
- * GET: รายการแจ้งเตือนทั้งหมดของ tenant
- * ============================ */
+/* ===== GET: รายการแจ้งเตือนของ tenant ===== */
 router.get('/tenant/notifications', verifyToken, async (req, res) => {
   try {
+    await ensureNotificationsTable();
     const tenantId = await getMyTenantId(req.user.id);
     if (!tenantId) return res.json([]);
 
     const [rows] = await db.query(
-      `SELECT id, tenant_id, type, title, body, ref_type, ref_id, status, created_at, read_at
+      `SELECT id, tenant_id, type, title, body, ref_type, ref_id,
+              status, created_at, read_at,
+              /* ฟิลด์ใหม่ อาจไม่มีในบาง DB เก่า แต่ ensure จะเติมให้แล้ว */
+              sent_line_at, line_status, line_error
          FROM notifications
         WHERE tenant_id = ?
         ORDER BY created_at DESC, id DESC`,
@@ -39,11 +42,10 @@ router.get('/tenant/notifications', verifyToken, async (req, res) => {
   }
 });
 
-/* ============================
- * PATCH: ทำเป็นอ่านแล้ว (ทีละรายการ)
- * ============================ */
+/* ===== PATCH: ทำเป็นอ่านแล้ว (ทีละรายการ) ===== */
 router.patch('/tenant/notifications/:id/read', verifyToken, async (req, res) => {
   try {
+    await ensureNotificationsTable();
     const tenantId = await getMyTenantId(req.user.id);
     if (!tenantId) return res.status(404).json({ error: 'tenant not found' });
 
@@ -61,11 +63,10 @@ router.patch('/tenant/notifications/:id/read', verifyToken, async (req, res) => 
   }
 });
 
-/* ============================
- * PATCH: ทำเป็นอ่านแล้วทั้งหมด (เฉพาะของตัวเอง)
- * ============================ */
+/* ===== PATCH: ทำเป็นอ่านแล้วทั้งหมด ===== */
 router.patch('/tenant/notifications/read-all', verifyToken, async (req, res) => {
   try {
+    await ensureNotificationsTable();
     const tenantId = await getMyTenantId(req.user.id);
     if (!tenantId) return res.json({ ok: true, updated: 0 });
 
@@ -82,11 +83,10 @@ router.patch('/tenant/notifications/read-all', verifyToken, async (req, res) => 
   }
 });
 
-/* ============================
- * DELETE: ล้างเฉพาะรายการที่ "อ่านแล้ว"
- * ============================ */
+/* ===== DELETE: ล้างเฉพาะรายการที่อ่านแล้ว ===== */
 router.delete('/tenant/notifications/clear-read', verifyToken, async (req, res) => {
   try {
+    await ensureNotificationsTable();
     const tenantId = await getMyTenantId(req.user.id);
     if (!tenantId) return res.json({ ok: true, deleted: 0 });
 
@@ -102,11 +102,10 @@ router.delete('/tenant/notifications/clear-read', verifyToken, async (req, res) 
   }
 });
 
-/* ============================
- * (เสริม) DELETE: ลบทีละรายการของตัวเอง
- * ============================ */
+/* ===== DELETE: ลบทีละรายการ ===== */
 router.delete('/tenant/notifications/:id', verifyToken, async (req, res) => {
   try {
+    await ensureNotificationsTable();
     const tenantId = await getMyTenantId(req.user.id);
     if (!tenantId) return res.status(404).json({ error: 'tenant not found' });
 

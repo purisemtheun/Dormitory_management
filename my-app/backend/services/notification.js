@@ -2,29 +2,56 @@
 const db = require('../config/db');
 const { pushLineAfterNotification } = require('./notifyAfterInsert');
 
-/**
- * สร้าง notification แล้วพยายามส่ง LINE ทันที (แบบ non-blocking)
- * - ถ้ามี conn (อยู่ใน transaction) จะใช้ conn
- * - ไม่ throw ออกนอก ให้ caller ไม่พัง
- * @param {object} params
- *   - tenant_id: string
- *   - type: 'invoice_created'|'payment_approved'|'repair_started'|string
- *   - title: string
- *   - body?: string
- *   - created_by?: number | null
- * @param {object|null} conn Optional connection (เริ่มจาก transaction ภายนอก)
- * @returns {Promise<{ok:boolean, id?:number}>}
- */
+/* สร้าง/อัปเกรดตาราง notifications ให้ครบฟิลด์ที่ใช้ */
+async function ensureNotificationsTable(conn = db) {
+  // 1) สร้างถ้ายังไม่มี (โครงครบชุด)
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      tenant_id VARCHAR(32) NOT NULL,
+      type VARCHAR(64) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      body TEXT NULL,
+      ref_type VARCHAR(32) NULL,
+      ref_id VARCHAR(64) NULL,
+      status ENUM('unread','read') NOT NULL DEFAULT 'unread',
+      sent_line_at DATETIME NULL,
+      line_status ENUM('ok','fail','unlinked') NULL,
+      line_error TEXT NULL,
+      created_by BIGINT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      read_at DATETIME NULL,
+      PRIMARY KEY (id),
+      KEY idx_tenant_created (tenant_id, created_at),
+      KEY idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 2) กรณีมีตารางอยู่แล้วแต่ขาดคอลัมน์ → เติมให้ครบ
+  await conn.query(`ALTER TABLE notifications
+    ADD COLUMN IF NOT EXISTS sent_line_at DATETIME NULL AFTER status,
+    ADD COLUMN IF NOT EXISTS line_status ENUM('ok','fail','unlinked') NULL AFTER sent_line_at,
+    ADD COLUMN IF NOT EXISTS line_error  TEXT NULL AFTER line_status
+  `).catch(() => {}); // ถ้า engine เก่าไม่รองรับ IF NOT EXISTS จะข้ามไป (ไม่ทำให้พัง)
+
+  // fallback แบบแยก ๆ สำหรับบาง MySQL ที่ไม่รองรับ IF NOT EXISTS ใน ALTER หลายคอลัมน์
+  try { await conn.query(`ALTER TABLE notifications ADD COLUMN sent_line_at DATETIME NULL`); } catch {}
+  try { await conn.query(`ALTER TABLE notifications ADD COLUMN line_status ENUM('ok','fail','unlinked') NULL`); } catch {}
+  try { await conn.query(`ALTER TABLE notifications ADD COLUMN line_error TEXT NULL`); } catch {}
+}
+
+/** สร้าง notification แล้วพยายามส่ง LINE แบบ async */
 async function createNotification(params, conn = null) {
   const { tenant_id, type, title, body = '', created_by = null } = params || {};
   if (!tenant_id || !type || !title) {
     return { ok: false, error: 'tenant_id, type, title are required' };
   }
 
-  // ใช้ runner สำหรับ "insert" เท่านั้น (อาจเป็น conn ในทรานแซกชัน)
   const runner = conn ?? db;
 
   try {
+    await ensureNotificationsTable(runner);
+
     const [ins] = await runner.query(
       `INSERT INTO notifications (tenant_id, type, title, body, created_by)
        VALUES (?, ?, ?, ?, ?)`,
@@ -32,11 +59,11 @@ async function createNotification(params, conn = null) {
     );
     const id = ins?.insertId ?? null;
 
-    // ยิง LINE แบบ async ด้วย pool หลักเสมอ (ไม่ใช้ conn เดิม)
+    // ส่ง LINE แบบ async ด้วย pool หลัก
     setTimeout(async () => {
       try {
         const res = await pushLineAfterNotification(null, { tenant_id, type, title, body });
-        if (!id) return; // ถ้าไม่มี id ก็ไม่ต้องอัปเดตสถานะ
+        if (!id) return;
 
         if (res?.ok) {
           await db.query(
@@ -61,7 +88,6 @@ async function createNotification(params, conn = null) {
           );
         }
       } catch (err) {
-        // ถ้า push/อัปเดตพัง ให้ติดธง fail ไว้เพื่อ debug
         if (id) {
           try {
             await db.query(
@@ -70,7 +96,7 @@ async function createNotification(params, conn = null) {
                WHERE id = ? LIMIT 1`,
               [String(err?.message || err), id]
             );
-          } catch (_) { /* กลืน เพื่อไม่ให้กระทบผู้ใช้ */ }
+          } catch {}
         }
         console.warn('[notification] async push failed:', err?.message || err);
       }
@@ -82,5 +108,4 @@ async function createNotification(params, conn = null) {
   }
 }
 
-
-module.exports = { createNotification };
+module.exports = { createNotification, ensureNotificationsTable };
