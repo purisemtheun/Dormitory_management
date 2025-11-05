@@ -1,4 +1,3 @@
-// src/api/reports.api.js
 const BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000/api";
 const TOKEN_KEY = process.env.REACT_APP_TOKEN_KEY || "dm_token";
 
@@ -20,31 +19,26 @@ async function j(url, opts = {}) {
 }
 
 export const reportApi = {
-  /* ===== รายงาน ===== */
+  /* ===== รายงานเดิม ===== */
   roomsStatus    : () => j(`${BASE}/reports/rooms-status`),
-
-  // รายเดือนรวมทั้งหอ (เชื่อม rooms.price + meter_readings ตามโค้ด backend ที่คุณมี)
   revenueMonthly : (months = 6) => j(`${BASE}/reports/monthly-summary?months=${months}`),
-
-  // รายวัน (ยังใช้ของเดิม)
   revenueDaily   : (from, to) => j(`${BASE}/reports/revenue?granularity=daily&from=${from}&to=${to}`),
 
-  // ของเดิม ยังอยู่เพื่อความเข้ากันได้
-  debts          : (asOf) => j(`${BASE}/reports/debts${asOf ? `?asOf=${asOf}` : ""}`),
+  /* ✅ ใช้ endpoint ใหม่สำหรับแท็บ Debts (แยกหมวดรายใบแจ้งหนี้) */
+  debts          : (asOf) => j(`${BASE}/admin/debts/by-invoice${asOf ? `?asOf=${asOf}` : ""}`),
+
   payments       : (from, to) => j(`${BASE}/reports/payments?from=${from}&to=${to}`),
 
-  /* ===== Utilities: ค่าน้ำ/ไฟ ===== */
+  /* ===== Utilities ===== */
   meterMonthly    : (ym) => j(`${BASE}/reports/meter-monthly?ym=${ym}`),
   meterSaveSimple : (payload) => j(`${BASE}/reports/meter/save-simple`, { method: "POST", body: JSON.stringify(payload) }),
   meterToggleLock : (payload) => j(`${BASE}/reports/meter/toggle-lock`, { method: "POST", body: JSON.stringify(payload) }),
-
-  // เจาะเดือนตามห้อง
   revenueMonthlyBreakdown: (period_ym) => j(`${BASE}/reports/monthly-breakdown/${period_ym}`),
 
-  /* ===== ใหม่: หนี้ ===== */
-  debtsSummary: () => j(`${BASE}/debts/summary`),                // ตัวเลขการ์ด (0 ถ้าไม่มี)
+  /* ===== ใหม่: หัวการ์ด/ค้นหาแบบต่อผู้เช่า (ถ้าคุณใช้หน้า “ค้นหาหนี้ผู้เช่า”) ===== */
+  debtsSummary: () => j(`${BASE}/admin/debts/summary`),           // เดิมชี้ /debts → แก้เป็น /admin/debts
   debtsSearch : (qsObj = {}) => {
     const qs = new URLSearchParams(qsObj).toString();
-    return j(`${BASE}/debts/search${qs ? `?${qs}` : ""}`);
+    return j(`${BASE}/admin/debts/search${qs ? `?${qs}` : ""}`);  // เดิมชี้ /debts → แก้เป็น /admin/debts
   },
 };

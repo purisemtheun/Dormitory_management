@@ -4,6 +4,12 @@ import { CircleAlert, CalendarDays, UserRound, Home, Coins, Droplet, Zap } from 
 const thb = (n) =>
   Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/**
+ * props:
+ *  - data: array รายการใบแจ้งหนี้ (ต้องมี: room_number, tenant_name, rent_amount, water_amount, electric_amount, total_amount, days_overdue, invoice_no)
+ *  - asOf: string 'YYYY-MM-DD'
+ *  - setAsOf: fn(dateString) => void
+ */
 export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
   const items = Array.isArray(data) ? data : [];
 
@@ -28,7 +34,7 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
     setPage(p);
   };
 
-  // สรุปรวมท้ายตาราง (รวมเฉพาะรายการที่แสดงในหน้าปัจจุบันหรือรวมทั้งหมด? -> รวมทั้งหมด)
+  // รวมทั้ง dataset ทั้งหมด
   const sum = useMemo(() => {
     return items.reduce(
       (acc, r) => {
@@ -100,41 +106,53 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
                   </td>
                 </tr>
               ) : (
-                pageRows.map((x, i) => (
-                  <tr key={x.invoiceNo || x.invoice_no || `${page}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Home className="w-4 h-4 text-slate-400" />
-                        <span className="font-semibold text-slate-900">{x.roomNo || x.room_number || "-"}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 text-slate-800">
-                        <UserRound className="w-4 h-4 text-slate-400" />
-                        <span>{x.tenant || x.tenant_name || "-"}</span>
-                      </div>
-                    </td>
-                    <TdRight>{thb(x.rent_amount)}</TdRight>
-                    <TdRight>
-                      <span className="inline-flex items-center gap-1"><Droplet className="w-4 h-4" />{thb(x.water_amount)}</span>
-                    </TdRight>
-                    <TdRight>
-                      <span className="inline-flex items-center gap-1"><Zap className="w-4 h-4" />{thb(x.electric_amount)}</span>
-                    </TdRight>
-                    <TdRight className="font-bold text-slate-900">{thb(x.total_amount ?? x.amount)}</TdRight>
-                    <td className="px-6 py-4 text-center">{x.daysOverdue ?? x.days_overdue ?? "-"}</td>
-                    <td className="px-6 py-4">
-                      <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-slate-300 text-slate-800 bg-white">
-                        <Coins className="w-4 h-4 text-slate-500" />
-                        <span className="font-medium">{x.invoiceNo || x.invoice_no || "-"}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                pageRows.map((x, i) => {
+                  const room = x.roomNo || x.room_number || x.room_id || "-";
+                  const tenant = x.tenant || x.tenant_name || "-";
+                  const invNo = x.invoiceNo || x.invoice_no || "-";
+                  const overdue = x.daysOverdue ?? x.days_overdue ?? "-";
+                  return (
+                    <tr key={invNo !== "-" ? invNo : `${i}-${room}`} className="hover:bg-indigo-50/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <Home className="w-4 h-4 text-slate-400" />
+                          <span className="font-semibold text-slate-900">{room}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2 text-slate-800">
+                          <UserRound className="w-4 h-4 text-slate-400" />
+                          <span>{tenant}</span>
+                        </div>
+                      </td>
+                      <TdRight>{thb(x.rent_amount)}</TdRight>
+                      <TdRight>
+                        <span className="inline-flex items-center gap-1">
+                          <Droplet className="w-4 h-4" />
+                          {thb(x.water_amount)}
+                        </span>
+                      </TdRight>
+                      <TdRight>
+                        <span className="inline-flex items-center gap-1">
+                          <Zap className="w-4 h-4" />
+                          {thb(x.electric_amount)}
+                        </span>
+                      </TdRight>
+                      <TdRight className="font-bold text-slate-900">{thb(x.total_amount ?? x.amount)}</TdRight>
+                      <td className="px-6 py-4 text-center">{overdue}</td>
+                      <td className="px-6 py-4">
+                        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-slate-300 text-slate-800 bg-white">
+                          <Coins className="w-4 h-4 text-slate-500" />
+                          <span className="font-medium">{invNo}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
 
-            {/* รวมท้ายตาราง (รวมทั้ง dataset ทั้งหมด) */}
+            {/* รวมท้ายตาราง */}
             {items.length > 0 && (
               <tfoot>
                 <tr className="bg-indigo-50 border-t border-indigo-100">

@@ -11,3 +11,7 @@ export function searchDebts(params) {
   // เดิม: return http.get('/api/debts/search', { params });
   return http.get('/api/admin/debts/search', { params });
 }
+
+export function listDebtsByInvoice(params) {
+  return http.get('/api/admin/debts/by-invoice', { params });
+}

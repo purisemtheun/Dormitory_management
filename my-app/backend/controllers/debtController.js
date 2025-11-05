@@ -4,7 +4,7 @@ const db = require('../config/db');
 /* ------------------------------------------------------------------ *
  * SUMMARY: ตัวเลขหัวการ์ดหน้า "ค้นหาหนี้ผู้เช่า"
  * พยายามใช้ v_invoice_balance ก่อน; ถ้าไม่มี view จะ fallback ไป invoices
- * โครงสร้างผลลัพธ์เป็น flat object เพื่อให้ frontend อ่านง่าย
+ * ส่งรูปแบบ { data: {...} } ให้ตรงกับ DebtSearchPage ที่อ่าน res?.data?.data
  * ------------------------------------------------------------------ */
 async function getDebtSummary(_req, res) {
   try {
@@ -43,7 +43,8 @@ async function getDebtSummary(_req, res) {
             WHERE v.remaining > 0 AND v.due_date < CURDATE()
           ), 0) AS max_overdue_days
       `);
-      return res.json(row || { tenants_total:0, tenants_debtors:0, outstanding_total:0, overdue_total:0, max_overdue_days:0 });
+      const safe = row || { tenants_total:0, tenants_debtors:0, outstanding_total:0, overdue_total:0, max_overdue_days:0 };
+      return res.json({ data: safe });
     } catch (_) {
       // ถ้า v_invoice_balance ไม่มี/ใช้ไม่ได้ → fallback
     }
@@ -78,7 +79,8 @@ async function getDebtSummary(_req, res) {
         ), 0) AS max_overdue_days
     `);
 
-    return res.json(row2 || { tenants_total:0, tenants_debtors:0, outstanding_total:0, overdue_total:0, max_overdue_days:0 });
+    const safe2 = row2 || { tenants_total:0, tenants_debtors:0, outstanding_total:0, overdue_total:0, max_overdue_days:0 };
+    return res.json({ data: safe2 });
   } catch (e) {
     console.error('getDebtSummary error:', e);
     res.status(500).json({ message: e.message || 'Internal error' });
@@ -149,7 +151,7 @@ async function searchDebts(req, res) {
         LEFT JOIN rooms r  ON r.room_id = t.room_id
         LEFT JOIN v_invoice_balance vb
                ON vb.tenant_id = t.tenant_id
-              AND vb.remaining > 0    /* ให้ได้ 0 ได้เพราะเป็น LEFT JOIN */
+              AND vb.remaining > 0
         WHERE COALESCE(t.is_deleted,0)=0
           ${w}
         GROUP BY t.tenant_id, u.fullname, u.name, u.phone, t.room_id, r.room_id
@@ -274,7 +276,108 @@ async function searchDebts(req, res) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * รายใบแจ้งหนี้ (สำหรับ DebtsTable ที่ต้องการแยกเช่า/น้ำ/ไฟ)
+ * รับพารามิเตอร์ asOf=YYYY-MM-DD (รองรับ date=... เผื่อของเก่า)
+ * จะพยายามใช้คอลัมน์วันที่ที่มีอยู่จริงในตาราง invoices (ลองหลายชื่อ)
+ * ------------------------------------------------------------------ */
+async function listDebtsByInvoice(req, res) {
+  try {
+    const dateParam = (req.query.asOf || req.query.date || '').trim() || new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const candidates = ['i.invoice_date', 'i.issue_date', 'i.date', 'i.created_at', 'i.due_date'];
+
+    const baseSql = (dateColumn) => `
+      SELECT
+        i.id AS invoice_id,
+        i.invoice_no,
+        COALESCE(r.room_id, t.room_id) AS room_number,
+        COALESCE(NULLIF(u.fullname,''), u.name, CONCAT('Tenant#', t.tenant_id)) AS tenant_name,
+        COALESCE(i.rent_amount,0)     AS rent_amount,
+        COALESCE(i.water_amount,0)    AS water_amount,
+        COALESCE(i.electric_amount,0) AS electric_amount,
+        COALESCE(i.amount,0)          AS invoice_total,
+        COALESCE(p.paid,0)            AS paid_amount,
+        GREATEST(COALESCE(i.amount,0) - COALESCE(p.paid,0), 0) AS total_amount,
+        CASE
+          WHEN i.due_date IS NULL THEN 0
+          WHEN i.due_date < CURDATE() THEN DATEDIFF(CURDATE(), i.due_date)
+          ELSE 0
+        END AS days_overdue
+      FROM invoices i
+      JOIN tenants t ON t.tenant_id = i.tenant_id AND COALESCE(t.is_deleted,0)=0
+      LEFT JOIN users u ON u.id = t.user_id
+      LEFT JOIN rooms r ON r.room_id = t.room_id
+      LEFT JOIN (
+        SELECT invoice_id, SUM(amount) AS paid
+        FROM payments
+        WHERE status='approved'
+        GROUP BY invoice_id
+      ) p ON p.invoice_id = i.id
+      WHERE (UPPER(i.status) IN ('UNPAID','OVERDUE','PARTIAL') OR i.status IN ('unpaid','overdue','partial'))
+        AND GREATEST(COALESCE(i.amount,0) - COALESCE(p.paid,0),0) > 0
+        AND ${dateColumn} <= ?
+      ORDER BY r.room_id, i.invoice_no
+    `;
+
+    // Try each candidate date column until one succeeds
+    for (const col of candidates) {
+      try {
+        const sql = baseSql(col);
+        const [rows] = await db.query(sql, [dateParam]);
+        // If query succeeded, return results (even empty)
+        return res.json({ ok: true, dateColumn: col, date: dateParam, data: rows });
+      } catch (err) {
+        if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+          // try next candidate
+          continue;
+        }
+        // other errors -> throw
+        throw err;
+      }
+    }
+
+    // Final fallback: run same query but WITHOUT date filter
+    const fallbackSql = `
+      SELECT
+        i.id AS invoice_id,
+        i.invoice_no,
+        COALESCE(r.room_id, t.room_id) AS room_number,
+        COALESCE(NULLIF(u.fullname,''), u.name, CONCAT('Tenant#', t.tenant_id)) AS tenant_name,
+        COALESCE(i.rent_amount,0)     AS rent_amount,
+        COALESCE(i.water_amount,0)    AS water_amount,
+        COALESCE(i.electric_amount,0) AS electric_amount,
+        COALESCE(i.amount,0)          AS invoice_total,
+        COALESCE(p.paid,0)            AS paid_amount,
+        GREATEST(COALESCE(i.amount,0) - COALESCE(p.paid,0), 0) AS total_amount,
+        CASE
+          WHEN i.due_date IS NULL THEN 0
+          WHEN i.due_date < CURDATE() THEN DATEDIFF(CURDATE(), i.due_date)
+          ELSE 0
+        END AS days_overdue
+      FROM invoices i
+      JOIN tenants t ON t.tenant_id = i.tenant_id AND COALESCE(t.is_deleted,0)=0
+      LEFT JOIN users u ON u.id = t.user_id
+      LEFT JOIN rooms r ON r.room_id = t.room_id
+      LEFT JOIN (
+        SELECT invoice_id, SUM(amount) AS paid
+        FROM payments
+        WHERE status='approved'
+        GROUP BY invoice_id
+      ) p ON p.invoice_id = i.id
+      WHERE (UPPER(i.status) IN ('UNPAID','OVERDUE','PARTIAL') OR i.status IN ('unpaid','overdue','partial'))
+        AND GREATEST(COALESCE(i.amount,0) - COALESCE(p.paid,0),0) > 0
+      ORDER BY r.room_id, i.invoice_no
+    `;
+    const [rows] = await db.query(fallbackSql);
+    return res.json({ ok: true, dateColumn: null, date: null, data: rows });
+  } catch (e) {
+    console.error('listDebtsByInvoice error:', e);
+    res.status(500).json({ ok: false, error: e.message || 'Internal error' });
+  }
+}
+
 module.exports = {
   getDebtSummary,
   searchDebts,
+  listDebtsByInvoice,
 };

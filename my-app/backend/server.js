@@ -88,8 +88,15 @@ app.get(
   repairController.listTechnicians
 );
 
-// Debts (admin only)
-app.use('/api/debts', verifyToken, authorizeRoles('admin'), require('./routes/debtRoutes'));
+/* ==================== Debts (admin/staff) ==================== */
+/* สำคัญ: ให้ path ตรงกับฝั่งหน้าเว็บ (/api/admin/debts/...)
+ * และอย่าใส่ verifyToken/authorize ที่นี่ซ้ำ เพราะมีใน routes/debtRoutes.js อยู่แล้ว
+ */
+const debtRoutes = require('./routes/debtRoutes');
+app.use('/api/admin/debts', debtRoutes);
+
+// (ออปชัน) เผื่อของเก่ายังเรียก /api/debts → ทำ alias ไว้ด้วย
+app.use('/api/debts', debtRoutes);
 
 // Legacy
 app.get('/api/invoices', verifyToken, paymentCtrl.getMyLastInvoices);

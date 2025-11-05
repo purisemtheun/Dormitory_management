@@ -12,4 +12,8 @@ router.get('/summary', debtCtrl.getDebtSummary);
 /* ตารางค้นหา */
 router.get('/search', debtCtrl.searchDebts);
 
+router.get('/by-invoice', debtCtrl.listDebtsByInvoice);
+
+
+
 module.exports = router;
