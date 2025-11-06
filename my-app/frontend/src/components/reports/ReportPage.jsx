@@ -42,15 +42,18 @@ export default function ReportsPage() {
         if (tab === "rooms") {
           const res = await getRoomsStatus();
           if (!alive) return;
-          setRooms(Array.isArray(res?.data || res) ? (res.data || res) : []);
+          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+          setRooms(data);
         } else if (tab === "revenue") {
           const res = await getRevenueMonthly();
           if (!alive) return;
-          setRevenue(Array.isArray(res?.data || res) ? (res.data || res) : []);
+          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+          setRevenue(data);
         } else if (tab === "debts") {
           const res = await getDebts();
           if (!alive) return;
-          setDebts(Array.isArray(res?.data || res) ? (res.data || res) : []);
+          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+          setDebts(data);
         }
       } catch (e) {
         setErr(e.message || "โหลดข้อมูลล้มเหลว");
@@ -59,15 +62,24 @@ export default function ReportsPage() {
       }
     }
     load();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [tab]);
 
   // KPI จาก rooms
   const kpi = useMemo(() => {
-    const total = rooms.length;
-    const vacant = rooms.filter(r => (r.status || r.room_status) === "vacant" || r.status_th === "ว่าง").length;
-    const occupied = rooms.filter(r => (r.status || r.room_status) === "occupied" || r.status_th === "พักอยู่").length;
-    const overdue = rooms.filter(r => (r.status || r.room_status) === "overdue" || r.status_th === "ค้างชำระ").length;
+    const list = Array.isArray(rooms) ? rooms : [];
+    const total = list.length;
+    const vacant = list.filter(
+      (r) => (r.status || r.room_status) === "vacant" || r.status_th === "ว่าง"
+    ).length;
+    const occupied = list.filter(
+      (r) => (r.status || r.room_status) === "occupied" || r.status_th === "พักอยู่"
+    ).length;
+    const overdue = list.filter(
+      (r) => (r.status || r.room_status) === "overdue" || r.status_th === "ค้างชำระ"
+    ).length;
     return { total, vacant, occupied, overdue };
   }, [rooms]);
 
@@ -137,7 +149,8 @@ export default function ReportsPage() {
 
           <div className="card">
             <h3 className="card-title">สถานะห้องพัก</h3>
-            <RoomsStatusTable rows={rooms} />
+            {/* ✅ ส่งพร็อพให้ถูกชื่อ + บังคับเป็นอาร์เรย์ */}
+            <RoomsStatusTable data={Array.isArray(rooms) ? rooms : []} />
           </div>
         </>
       )}
@@ -155,13 +168,21 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {revenue?.length ? revenue.map((r, i) => (
-                  <tr key={i} className="tr">
-                    <td className="td">{r.month_label || r.month}</td>
-                    <td className="td text-right num">{Number(r.total || r.amount || 0).toLocaleString()}</td>
+                {(Array.isArray(revenue) ? revenue : []).length ? (
+                  (revenue || []).map((r, i) => (
+                    <tr key={i} className="tr">
+                      <td className="td">{r.month_label || r.month}</td>
+                      <td className="td text-right num">
+                        {Number(r.total || r.amount || 0).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="empty" colSpan={2}>
+                      ยังไม่มีข้อมูล
+                    </td>
                   </tr>
-                )) : (
-                  <tr><td className="empty" colSpan={2}>ยังไม่มีข้อมูล</td></tr>
                 )}
               </tbody>
             </table>
@@ -183,14 +204,22 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {debts?.length ? debts.map((d, i) => (
-                  <tr key={i} className="tr">
-                    <td className="td">{d.room_no || d.room}</td>
-                    <td className="td">{d.tenant_name || "-"}</td>
-                    <td className="td text-right num">{Number(d.amount || d.debt || 0).toLocaleString()}</td>
+                {(Array.isArray(debts) ? debts : []).length ? (
+                  (debts || []).map((d, i) => (
+                    <tr key={i} className="tr">
+                      <td className="td">{d.room_no || d.room}</td>
+                      <td className="td">{d.tenant_name || "-"}</td>
+                      <td className="td text-right num">
+                        {Number(d.amount || d.debt || 0).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="empty" colSpan={3}>
+                      ไม่มีหนี้ค้างชำระ
+                    </td>
                   </tr>
-                )) : (
-                  <tr><td className="empty" colSpan={3}>ไม่มีหนี้ค้างชำระ</td></tr>
                 )}
               </tbody>
             </table>
