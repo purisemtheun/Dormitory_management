@@ -2,24 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import http from "../../services/http";
 import { paymentApi } from "../../services/payment.api";
-import {
-  Wallet,
-  FileUp,
-  ReceiptText,
-  Hash,
-  QrCode,
-  Droplet,
-  Zap,
-  Home,
-} from "lucide-react";
-
-/**
- * PaymentPage (UX/UI เข้าธีมรายงาน)
- * - ตารางบิล 3 งวดล่าสุด (เฉพาะยังค้าง/รออนุมัติ) จัดชิดซ้าย + tabular-nums ให้ตัวเลขเรียงสวย
- * - แยกคอลัมน์: ค่าเช่า / ค่าน้ำ / ค่าไฟ / รวม และแสดงสถานะเป็น badge
- * - เลือกบิลที่จะอัปโหลดสลิปได้ (default = บิลค้างล่าสุด)
- * - QR โหลดจาก API /api/payments/qr (fallback -> /public/img/Qrcode.jpg)
- */
+import { Wallet, FileUp, ReceiptText, Hash, QrCode, Home } from "lucide-react";
 
 export default function PaymentPage() {
   const [invoices, setInvoices] = useState([]);
@@ -32,13 +15,12 @@ export default function PaymentPage() {
   const [uploading, setUploading] = useState(false);
   const [selectedInvoiceNo, setSelectedInvoiceNo] = useState("");
 
-  // QR จาก API; ถ้า error ใช้ไฟล์ public/img/Qrcode.jpg
   const DEFAULT_QR = "/img/Qrcode.jpg";
   const [qrUrl, setQrUrl] = useState("");
   const [qrLoading, setQrLoading] = useState(true);
 
   const normalizeResponse = (resp) => (resp?.data !== undefined ? resp.data : resp);
-  const isDebt = (s) => String(s || "").toLowerCase() !== "paid"; // ไม่ใช่ paid = ค้าง/รอ
+  const isDebt = (s) => String(s || "").toLowerCase() !== "paid";
   const isImage = (url = "") => /\.(png|jpe?g|webp|gif)$/i.test(url);
 
   async function loadQR() {
@@ -58,13 +40,10 @@ export default function PaymentPage() {
   async function loadInvoices() {
     try {
       setLoadingInv(true);
-      // แสดง 5 รายการล่าสุดไว้ก่อน เผื่อผู้ใช้ต้องเลือกบิลย้อนหลัง
       const resp = await http.get("/api/payments/my-invoices?limit=5");
       const payload = normalizeResponse(resp);
       const list = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
       setInvoices(list);
-
-      // เลือกบิลค้างล่าสุดให้เอง (ถ้ายังไม่ได้เลือก)
       const firstNo =
         list.find((r) => isDebt(r.effective_status ?? r.status) && r.invoice_no?.length)?.invoice_no || "";
       setSelectedInvoiceNo((prev) => prev || firstNo);
@@ -84,7 +63,6 @@ export default function PaymentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // เฉพาะบิลที่ยังค้าง/รอ อิง period_ym ใหม่สุด -> เก่าสุด แล้วตัด 3 รายการบนสุด
   const latest3 = useMemo(() => {
     const list = invoices.filter((r) => isDebt(r.effective_status ?? r.status));
     list.sort((a, b) => {
@@ -95,13 +73,11 @@ export default function PaymentPage() {
     return list.slice(0, 3);
   }, [invoices]);
 
-  // ยอดค้างรวมของ 3 บิลล่าสุด
   const totalDebt = useMemo(
     () => latest3.reduce((sum, r) => sum + Number(r.amount || 0), 0),
     [latest3]
   );
 
-  // บิลที่ถูกเลือกจริงสำหรับส่งสลิป
   const targetInvoice = useMemo(() => {
     if (selectedInvoiceNo) {
       return invoices.find((r) => r.invoice_no === selectedInvoiceNo) || latest3[0] || null;
@@ -128,7 +104,8 @@ export default function PaymentPage() {
     setServerSlipUrl("");
     if (!f) return;
 
-    const ALLOW = ["image/jpeg", "image/png", "application/pdf"];
+    // ✅ เพิ่ม image/jpg
+    const ALLOW = ["image/jpeg", "image/jpg", "image/png", "application/pdf"];
     const MAX = 5 * 1024 * 1024;
     if (!ALLOW.includes(f.type)) return setErr("รองรับเฉพาะ .jpg .png .pdf เท่านั้น");
     if (f.size > MAX) return setErr("ไฟล์ใหญ่เกิน 5MB");
@@ -152,20 +129,17 @@ export default function PaymentPage() {
         ? { invoice_no: selectedInvoiceNo, slip: file }
         : { invoice_id: targetInvoice.invoice_id, slip: file };
 
-      // paymentApi.submit ควรใช้ FormData ภายใน service นี้อยู่แล้ว
       const res = await paymentApi.submit(payload);
       const data = res?.data ?? res;
       const slipUrl = data?.slip_url ?? data?.data?.slip_url ?? data;
       if (typeof slipUrl === "string") setServerSlipUrl(slipUrl);
 
-      // รีโหลดรายการ เพื่อให้สถานะเปลี่ยนเป็น "รออนุมัติ" ทันที
       await loadInvoices();
 
-      // ถ้าบิลที่เลือกถูกส่งสลิปแล้ว ลองเลื่อนเลือกไปบิลค้างถัดไป
       const nextDebt =
         invoices
           .filter((r) => r.invoice_no !== (selectedInvoiceNo || targetInvoice?.invoice_no))
-          .find((r) => isDebt(r.status))?.invoice_no || "";
+          .find((r) => String(r.status || '').toLowerCase() !== 'paid')?.invoice_no || "";
       setSelectedInvoiceNo(nextDebt);
       setFile(null);
       setPreview("");
@@ -189,9 +163,7 @@ export default function PaymentPage() {
             </div>
             <div>
               <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">ชำระเงินค่าเช่า</h1>
-              <p className="text-white/80 text-sm sm:text-base mt-1">
-                ดูใบแจ้งหนี้งวดล่าสุดและอัปโหลดหลักฐานการโอน
-              </p>
+              <p className="text-white/80 text-sm sm:text-base mt-1">ดูใบแจ้งหนี้งวดล่าสุดและอัปโหลดหลักฐานการโอน</p>
             </div>
             <div className="ml-auto text-right">
               <div className="text-xs sm:text-sm text-white/80">ยอดค้างรวม (3 งวดล่าสุด)</div>
@@ -236,9 +208,7 @@ export default function PaymentPage() {
                     return (
                       <tr
                         key={r.invoice_id}
-                        className={`hover:bg-purple-50/30 transition ${
-                          idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
-                        }`}
+                        className={`hover:bg-purple-50/30 transition ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}`}
                       >
                         <td className="py-3 px-3 font-semibold text-slate-800">{r.invoice_no}</td>
                         <td className="py-3 px-3">
@@ -248,25 +218,13 @@ export default function PaymentPage() {
                           </span>
                         </td>
                         <td className="py-3 px-3 font-mono tabular-nums text-slate-700">{r.period_ym}</td>
-                        <td className="py-3 px-3 font-mono tabular-nums">
-                          {Number(r.rent_amount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-3 font-mono tabular-nums">
-                          {Number(r.water_amount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-3 font-mono tabular-nums">
-                          {Number(r.electric_amount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-3 font-bold text-slate-900 font-mono tabular-nums">
-                          {Number(r.amount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-3 font-mono tabular-nums">
-                          {r.due_date ? String(r.due_date).slice(0, 10) : "-"}
-                        </td>
+                        <td className="py-3 px-3 font-mono tabular-nums">{Number(r.rent_amount || 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 font-mono tabular-nums">{Number(r.water_amount || 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 font-mono tabular-nums">{Number(r.electric_amount || 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 font-bold text-slate-900 font-mono tabular-nums">{Number(r.amount || 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 font-mono tabular-nums">{r.due_date ? String(r.due_date).slice(0, 10) : "-"}</td>
                         <td className="py-3 px-3">
-                          <span className={`text-sm px-3 py-1.5 rounded-full ring-1 ${st.color} font-semibold`}>
-                            {st.label}
-                          </span>
+                          <span className={`text-sm px-3 py-1.5 rounded-full ring-1 ${st.color} font-semibold`}>{st.label}</span>
                         </td>
                       </tr>
                     );
@@ -328,9 +286,7 @@ export default function PaymentPage() {
               <div className="mt-3 text-base text-slate-700">
                 <Hash className="inline w-5 h-5 text-slate-400 mr-1" />
                 บิลที่เลือก: {targetInvoice.invoice_no} · งวด {targetInvoice.period_ym} ·{" "}
-                <strong className="text-purple-700">
-                  {Number(targetInvoice.amount || 0).toLocaleString()} บาท
-                </strong>
+                <strong className="text-purple-700">{Number(targetInvoice.amount || 0).toLocaleString()} บาท</strong>
               </div>
             )}
           </div>
@@ -361,23 +317,9 @@ export default function PaymentPage() {
               <div className="text-base text-slate-600">
                 ✅ อัปโหลดแล้ว:{" "}
                 {isImage(serverSlipUrl) ? (
-                  <a
-                    href={encodeURI(serverSlipUrl)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-purple-700 font-medium hover:underline"
-                  >
-                    ดูสลิป
-                  </a>
+                  <a href={encodeURI(serverSlipUrl)} target="_blank" rel="noreferrer" className="text-purple-700 font-medium hover:underline">ดูสลิป</a>
                 ) : (
-                  <a
-                    href={encodeURI(serverSlipUrl)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-purple-700 font-medium hover:underline"
-                  >
-                    เปิดไฟล์
-                  </a>
+                  <a href={encodeURI(serverSlipUrl)} target="_blank" rel="noreferrer" className="text-purple-700 font-medium hover:underline">เปิดไฟล์</a>
                 )}
               </div>
             )}
