@@ -3,27 +3,9 @@ import { CircleAlert, CalendarDays, UserRound, Home, Coins, Droplet, Zap } from 
 
 const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/* normalize to array */
-const asArray = (input) => {
-  if (Array.isArray(input)) return input;
-  if (input?.data && Array.isArray(input.data)) return input.data;
-  if (input?.rows && Array.isArray(input.rows)) return input.rows;
-  if (input?.items && Array.isArray(input.items)) return input.items;
-  if (input == null || input === "") return [];
-  console.warn("[DebtsTable] non-array data received:", input);
-  return [];
-};
-
-/**
- * props:
- *  - data: array รายการใบแจ้งหนี้ (ต้องมี: room_number, tenant_name, rent_amount, water_amount, electric_amount, total_amount, days_overdue, invoice_no)
- *  - asOf: string 'YYYY-MM-DD'
- *  - setAsOf: fn(dateString) => void
- */
 export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
-  const items = asArray(data);
+  const items = Array.isArray(data) ? data : [];
 
-  /* ========= Pagination (5 ต่อหน้า สูงสุด 10 หน้า) ========= */
   const PAGE_SIZE = 5;
   const [page, setPage] = useState(1);
 
@@ -38,10 +20,7 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
   const end = start + PAGE_SIZE;
   const pageRows = items.slice(start, end);
 
-  const goto = (p) => {
-    if (p < 1 || p > totalPages) return;
-    setPage(p);
-  };
+  const goto = (p) => { if (p < 1 || p > totalPages) return; setPage(p); };
 
   const sum = useMemo(() => {
     return items.reduce(
@@ -58,7 +37,7 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
 
   return (
     <div className="space-y-4">
-      {/* Header + asOf + note 60 วัน */}
+      {/* Header */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -67,12 +46,8 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
             </div>
             <div>
               <h3 className="text-2xl font-bold text-slate-900">รายงานหนี้ค้างชำระ (แยกหมวด)</h3>
-              <p className="text-slate-600 text-sm mt-0.5">
-                แสดงยอดค้างที่ยังไม่ชำระ โดยแยก <b>ค่าเช่า / ค่าน้ำ / ค่าไฟ</b> และยอดรวมต่อใบแจ้งหนี้
-              </p>
-              <p className="text-rose-600 text-xs mt-1">
-                * ค้างชำระได้ไม่เกิน <b>2 เดือน</b> หรือ <b>60 วัน</b>
-              </p>
+              <p className="text-slate-600 text-sm mt-0.5">แสดงยอดค้างที่ยังไม่ชำระ โดยแยก <b>ค่าเช่า / ค่าน้ำ / ค่าไฟ</b> และยอดรวมต่อใบแจ้งหนี้</p>
+              <p className="text-rose-600 text-xs mt-1">* ค้างชำระได้ไม่เกิน <b>2 เดือน</b> หรือ <b>60 วัน</b></p>
             </div>
           </div>
 
@@ -89,7 +64,7 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
         </div>
       </div>
 
-      {/* ตาราง */}
+      {/* Table */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -115,12 +90,12 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
                 </tr>
               ) : (
                 pageRows.map((x = {}, i) => {
-                  const room = x.roomNo || x.room_number || x.room_id || "-";
-                  const tenant = x.tenant || x.tenant_name || "-";
-                  const invNo = x.invoiceNo || x.invoice_no || "-";
+                  const room = x.roomNo ?? x.room_number ?? x.room_id ?? "-";
+                  const tenant = x.tenant ?? x.tenant_name ?? "-";
+                  const invNo = x.invoiceNo ?? x.invoice_no ?? "-";
                   const overdue = x.daysOverdue ?? x.days_overdue ?? "-";
                   return (
-                    <tr key={invNo !== "-" ? invNo : `${i}-${room}`} className="hover:bg-indigo-50/30 transition-colors">
+                    <tr key={`${invNo}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <Home className="w-4 h-4 text-slate-400" />
@@ -134,18 +109,8 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
                         </div>
                       </td>
                       <TdRight>{thb(x.rent_amount)}</TdRight>
-                      <TdRight>
-                        <span className="inline-flex items-center gap-1">
-                          <Droplet className="w-4 h-4" />
-                          {thb(x.water_amount)}
-                        </span>
-                      </TdRight>
-                      <TdRight>
-                        <span className="inline-flex items-center gap-1">
-                          <Zap className="w-4 h-4" />
-                          {thb(x.electric_amount)}
-                        </span>
-                      </TdRight>
+                      <TdRight><span className="inline-flex items-center gap-1"><Droplet className="w-4 h-4" />{thb(x.water_amount)}</span></TdRight>
+                      <TdRight><span className="inline-flex items-center gap-1"><Zap className="w-4 h-4" />{thb(x.electric_amount)}</span></TdRight>
                       <TdRight className="font-bold text-slate-900">{thb(x.total_amount ?? x.amount)}</TdRight>
                       <td className="px-6 py-4 text-center">{overdue}</td>
                       <td className="px-6 py-4">
@@ -160,7 +125,6 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
               )}
             </tbody>
 
-            {/* รวมท้ายตาราง */}
             {items.length > 0 && (
               <tfoot>
                 <tr className="bg-indigo-50 border-t border-indigo-100">
@@ -179,21 +143,17 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
         {/* Pagination bar */}
         <div className="px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-slate-600">
-            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ | หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> | แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
+            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ |
+            หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> |
+            แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
           </p>
 
           <div className="flex items-center gap-2">
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
-
-            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value))}>
-              {Array.from({ length: totalPages }).map((_, i) => (
-                <option key={i + 1} value={i + 1}>{i + 1}</option>
-              ))}
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50" disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
+            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value) || 1)}>
+              {Array.from({ length: totalPages }).map((_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
             </select>
-
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50" disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
           </div>
         </div>
       </div>

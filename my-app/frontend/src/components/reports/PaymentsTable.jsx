@@ -2,29 +2,17 @@ import React, { useMemo, useState } from "react";
 import { CalendarDays, Search, Receipt, UserRound, Home, CheckCircle2, Clock, XCircle, AlertTriangle } from "lucide-react";
 
 /* ============== Helpers ============== */
-const thb = (n) =>
-  Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const fmtDate = (v) => {
   if (!v) return "";
   try {
     const d = new Date(v);
     if (Number.isNaN(+d)) return String(v).slice(0, 10);
-    return d.toISOString().slice(0, 10);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   } catch {
     return String(v).slice(0, 10);
   }
-};
-
-// normalize to array
-const asArray = (input) => {
-  if (Array.isArray(input)) return input;
-  if (input?.data && Array.isArray(input.data)) return input.data;
-  if (input?.rows && Array.isArray(input.rows)) return input.rows;
-  if (input?.items && Array.isArray(input.items)) return input.items;
-  if (input == null || input === "") return [];
-  console.warn("[PaymentsTable] non-array data received:", input);
-  return [];
 };
 
 const StatusBadge = ({ status }) => {
@@ -62,7 +50,6 @@ function KPI({ title, value, tone = "slate" }) {
     </div>
   );
 }
-
 function Th({ children, className = "" }) {
   return <th className={`px-6 py-3.5 text-sm font-semibold ${className}`}>{children}</th>;
 }
@@ -71,38 +58,28 @@ function TdRight({ children, className = "" }) {
 }
 
 /* ============== Main Component ============== */
-/**
- * Props:
- *  - data: Array of payments
- *  - range: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
- *  - setRange: fn to update range
- */
 export default function PaymentsTable({ data, range, setRange }) {
-  const items = asArray(data);
+  const items = Array.isArray(data) ? data : [];
 
-  // local filters
-  const [status, setStatus] = useState("all"); // all | approved | pending | rejected | partial | unpaid | overdue
+  const [status, setStatus] = useState("all");
   const [q, setQ] = useState("");
 
-  // filter + map
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return items.filter((p = {}) => {
-      // date inside range
-      const d = fmtDate(p.paid_at || p.payment_date || p.date || p.paidAt);
+      const d = fmtDate(p.paid_at ?? p.payment_date ?? p.date ?? p.paidAt);
       if (range?.from && d && d < range.from) return false;
       if (range?.to && d && d > range.to) return false;
 
-      // status
       if (status !== "all") {
-        const raw = String(p.payment_status || p.pay_status || p.status || p.invoice_status || "").toLowerCase();
+        const raw = String(p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "").toLowerCase();
         if (raw !== status) return false;
       }
 
       if (!term) return true;
-      const room   = String(p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "").toLowerCase();
-      const bill   = String(p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "").toLowerCase();
-      const payer  = String(p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "").toLowerCase();
+      const room  = String(p.room_no ?? p.room_number ?? p.roomNo ?? p.room ?? p.room_id ?? p.roomId ?? "").toLowerCase();
+      const bill  = String(p.invoice_no ?? p.invoiceNo ?? p.invoice_id ?? p.invoiceId ?? p.bill_no ?? "").toLowerCase();
+      const payer = String(p.payer_name ?? p.tenant_name ?? p.fullname ?? p.name ?? p.tenant_fullname ?? p.payer ?? p.tenant_id ?? "").toLowerCase();
       return room.includes(term) || bill.includes(term) || payer.includes(term);
     });
   }, [items, status, q, range?.from, range?.to]);
@@ -111,7 +88,7 @@ export default function PaymentsTable({ data, range, setRange }) {
     const total = filtered.reduce((sum, p = {}) => sum + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0);
     const count = filtered.length;
     const pending = filtered.filter((p = {}) =>
-      ["pending"].includes(String(p.payment_status || p.pay_status || p.status || p.invoice_status || "").toLowerCase())
+      ["pending"].includes(String(p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "").toLowerCase())
     ).length;
     return { total, count, pending };
   }, [filtered]);
@@ -146,7 +123,6 @@ export default function PaymentsTable({ data, range, setRange }) {
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-5">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-          {/* จากวันที่ */}
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-600">วันที่เริ่มต้น</span>
             <div className="relative">
@@ -155,12 +131,11 @@ export default function PaymentsTable({ data, range, setRange }) {
                 type="date"
                 className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
                 value={range?.from || ""}
-                onChange={(e) => setRange?.((p) => ({ ...p, from: e.target.value }))}
+                onChange={(e) => setRange?.((p) => ({ ...(p || {}), from: e.target.value }))}
               />
             </div>
           </label>
 
-          {/* ถึงวันที่ */}
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-600">ถึง</span>
             <div className="relative">
@@ -169,12 +144,11 @@ export default function PaymentsTable({ data, range, setRange }) {
                 type="date"
                 className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
                 value={range?.to || ""}
-                onChange={(e) => setRange?.((p) => ({ ...p, to: e.target.value }))}
+                onChange={(e) => setRange?.((p) => ({ ...(p || {}), to: e.target.value }))}
               />
             </div>
           </label>
 
-          {/* สถานะ */}
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-600">สถานะ</span>
             <select
@@ -192,7 +166,6 @@ export default function PaymentsTable({ data, range, setRange }) {
             </select>
           </label>
 
-          {/* ค้นหา */}
           <label className="md:col-span-2 flex flex-col gap-1">
             <span className="text-xs text-slate-600">ค้นหา</span>
             <div className="relative">
@@ -232,12 +205,12 @@ export default function PaymentsTable({ data, range, setRange }) {
                 </tr>
               ) : (
                 filtered.map((p = {}, i) => {
-                  const paidDate = p.paid_at || p.payment_date || p.date || p.paidAt;
-                  const room = p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "-";
-                  const invoiceNo = p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "-";
+                  const paidDate = p.paid_at ?? p.payment_date ?? p.date ?? p.paidAt;
+                  const room = p.room_no ?? p.room_number ?? p.roomNo ?? p.room ?? p.room_id ?? p.roomId ?? "-";
+                  const invoiceNo = p.invoice_no ?? p.invoiceNo ?? p.invoice_id ?? p.invoiceId ?? p.bill_no ?? "-";
                   const amount = Number(p.amount ?? p.total ?? p.amount_paid ?? 0);
-                  const payer = p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "-";
-                  const rawStatus = p.payment_status || p.pay_status || p.status || p.invoice_status || "";
+                  const payer = p.payer_name ?? p.tenant_name ?? p.fullname ?? p.name ?? p.tenant_fullname ?? p.payer ?? p.tenant_id ?? "-";
+                  const rawStatus = p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "";
 
                   return (
                     <tr key={`${invoiceNo}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
@@ -270,7 +243,6 @@ export default function PaymentsTable({ data, range, setRange }) {
               )}
             </tbody>
 
-            {/* Footer total */}
             {filtered.length > 0 && (
               <tfoot>
                 <tr className="bg-indigo-50 border-t border-indigo-100">
@@ -278,9 +250,7 @@ export default function PaymentsTable({ data, range, setRange }) {
                   <TdRight className="font-bold text-slate-900">
                     {thb(filtered.reduce((s, p = {}) => s + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0))}
                   </TdRight>
-                  <td className="px-6 py-3 text-slate-700" colSpan={2}>
-                    ใบชำระทั้งหมด {filtered.length} ใบ
-                  </td>
+                  <td className="px-6 py-3 text-slate-700" colSpan={2}>ใบชำระทั้งหมด {filtered.length} ใบ</td>
                 </tr>
               </tfoot>
             )}

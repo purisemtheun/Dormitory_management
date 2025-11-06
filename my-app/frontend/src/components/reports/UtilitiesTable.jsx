@@ -2,51 +2,36 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { reportApi } from "../../api/reports.api";
 import { Droplet, Zap } from "lucide-react";
 
-// --------- helpers ----------
 const val = (v, d = 0) => (v === null || v === undefined || v === "" ? d : v);
 const num = (v) => Number(val(v, 0)) || 0;
-
-const asArray = (input) => {
-  if (Array.isArray(input)) return input;
-  if (input?.data && Array.isArray(input.data)) return input.data;
-  if (input?.rows && Array.isArray(input.rows)) return input.rows;
-  if (input?.items && Array.isArray(input.items)) return input.items;
-  if (input == null || input === "") return [];
-  console.warn("[UtilitiesTable] non-array data received:", input);
-  return [];
-};
 
 const roomLabel = (r = {}) =>
   String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
 
 const monthLabel = (ym) => {
-  if (!ym) return "-";
-  const [y, m] = String(ym).split("-");
+  const s = String(ym ?? "");
+  const parts = s.split("-");
+  if (parts.length < 2) return s || "-";
+  const [y, m] = parts;
   const dt = new Date(`${y}-${m}-01T00:00:00`);
-  if (Number.isNaN(+dt)) return String(ym);
-  return dt.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+  return Number.isNaN(+dt) ? s || "-" : dt.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
 };
 
-// ✅ ฟังก์ชันรวม fallback ของ "ชื่อผู้เช่า" ให้แน่นอน
 const tenantNameOf = (r = {}) => {
-  const name =
-    r.tenant_name ?? r.tenant ?? r.fullname ?? r.name ?? r.tenantName ?? r.tenant_fullname ?? "";
+  const name = r.tenant_name ?? r.tenant ?? r.fullname ?? r.name ?? r.tenantName ?? r.tenant_fullname ?? "";
   const s = String(name || "").trim();
   return s.length ? s : "-";
 };
 
 export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
-  // Data/UI state
   const [rows, setRows] = useState([]);
   const [savingId, setSavingId] = useState(null);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Pagination
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5); // default 5 รายการ/หน้า
+  const [pageSize, setPageSize] = useState(5);
 
-  // --------- API method fallbacks (ชื่อยืดหยุ่น) ----------
   const getMonthlyFn =
     reportApi?.getMeterMonthlySimple ||
     reportApi?.meterMonthlySimple ||
@@ -58,16 +43,14 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
     reportApi?.saveMeterSimple ||
     reportApi?.meterSaveReading;
 
-  // --------- fetch month ----------
   const fetchMonth = useCallback(async () => {
     if (!period || !getMonthlyFn) return;
     try {
       setLoading(true);
-      const res =
-        (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
-      const next = asArray(res);
+      const res = (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
+      const next = Array.isArray(res) ? res : (res?.data ?? []);
       setRows(next);
-      setPage(1); // กลับไปหน้าแรกทุกครั้งที่โหลดใหม่
+      setPage(1);
     } catch (e) {
       console.error(e);
       setMsg(`โหลดข้อมูลล้มเหลว: ${e?.message || "กรุณาลองอีกครั้ง"}`);
@@ -77,9 +60,8 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
     }
   }, [getMonthlyFn, period]);
 
-  useEffect(() => setRows(asArray(data)), [data]);
+  useEffect(() => setRows(Array.isArray(data) ? data : []), [data]);
 
-  // --------- summary ----------
   const summary = useMemo(() => {
     return rows.reduce(
       (acc, r = {}) => {
@@ -97,12 +79,10 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
     );
   }, [rows]);
 
-  // --------- local edit ----------
   const updateLocal = (id, patch) => {
-    setRows((prev) => prev.map((r) => (r.room_id === id ? { ...r, ...patch } : r)));
+    setRows((prev) => (Array.isArray(prev) ? prev.map((r = {}) => (r.room_id === id ? { ...r, ...patch } : r)) : prev));
   };
 
-  // --------- save one row ----------
   const saveRow = async (r = {}) => {
     try {
       if (!saveFn) {
@@ -128,15 +108,14 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
       setMsg("บันทึกแล้ว");
       setTimeout(() => setMsg(""), 1600);
     } catch (e) {
-      setMsg(`บันทึกล้มเหลว: ${e.message || "กรุณาลองอีกครั้ง"}`);
+      setMsg(`บันทึกล้มเหลว: ${e?.message || "กรุณาลองอีกครั้ง"}`);
     } finally {
       setSavingId(null);
     }
   };
 
-  // --------- pagination calc ----------
   const total = rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages = Math.max(1, Math.ceil(Math.max(total, 0) / pageSize));
   const startIdx = (page - 1) * pageSize;
   const pageRows = rows.slice(startIdx, startIdx + pageSize);
 
@@ -196,22 +175,15 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
         {/* Table top controls */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
-          <div className="text-sm text-slate-600">
-            แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว
-          </div>
+          <div className="text-sm text-slate-600">แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว</div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-700">แถว/หน้า</span>
             <select
               className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value) || 5);
-                setPage(1);
-              }}
+              onChange={(e) => { const n = Number(e.target.value) || 5; setPageSize(n); setPage(1); }}
             >
-              {[5, 10, 15, 20].map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
+              {[5, 10, 15, 20].map((n) => (<option key={n} value={n}>{n}</option>))}
             </select>
           </div>
         </div>
@@ -223,15 +195,12 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                 <th className="px-4 py-3 text-left w-16">#</th>
                 <th className="px-4 py-3 text-left w-24">ห้อง</th>
                 <th className="px-4 py-3 text-left">ผู้เช่า</th>
-
                 <th className="px-4 py-3 text-center w-32">หน่วยน้ำ</th>
                 <th className="px-4 py-3 text-center w-36">เรตน้ำ (บ./หน่วย)</th>
                 <th className="px-4 py-3 text-right w-32">ค่าน้ำ (บ.)</th>
-
                 <th className="px-4 py-3 text-center w-32">หน่วยไฟ</th>
                 <th className="px-4 py-3 text-center w-36">เรตไฟ (บ./หน่วย)</th>
                 <th className="px-4 py-3 text-right w-32">ค่าไฟ (บ.)</th>
-
                 <th className="px-4 py-3 text-right w-32">รวม (บ.)</th>
                 <th className="px-4 py-3 text-center w-24">บันทึก</th>
               </tr>
@@ -252,13 +221,8 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                     <tr key={r.room_id ?? `${idx}-${roomLabel(r)}`} className="hover:bg-slate-50/60 text-[15px]">
                       <td className="px-4 py-3">{startIdx + idx + 1}</td>
                       <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
+                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">{tenantNameOf(r)}</td>
 
-                      {/* ชื่อผู้เช่า */}
-                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">
-                        {tenantNameOf(r)}
-                      </td>
-
-                      {/* WATER UNIT */}
                       <td className="px-4 py-2">
                         <input
                           type="number"
@@ -269,7 +233,6 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                         />
                       </td>
 
-                      {/* WATER RATE */}
                       <td className="px-4 py-2">
                         <input
                           type="number"
@@ -284,7 +247,6 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                         {wAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
-                      {/* ELECTRIC UNIT */}
                       <td className="px-4 py-2">
                         <input
                           type="number"
@@ -295,7 +257,6 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                         />
                       </td>
 
-                      {/* ELECTRIC RATE */}
                       <td className="px-4 py-2">
                         <input
                           type="number"
@@ -341,19 +302,14 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
           <div className="text-sm text-slate-600">หน้า <b>{page}</b> / {totalPages}</div>
           <div className="flex items-center gap-2">
-            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>ก่อนหน้า</button>
-            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>ถัดไป</button>
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>ก่อนหน้า</button>
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>ถัดไป</button>
           </div>
         </div>
       </div>
 
-      {/* Inline message */}
       {msg && (
-        <div className={`rounded-xl border px-4 py-3 ${
-          msg.startsWith("บันทึกแล้ว") ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                                        : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+        <div className={`rounded-xl border px-4 py-3 ${msg.startsWith("บันทึกแล้ว") ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
           {msg}
         </div>
       )}

@@ -1,70 +1,59 @@
 import React, { useMemo } from "react";
 import { BarChart3, Coins, Droplet, Zap, CalendarRange, ChevronDown } from "lucide-react";
 
-/* ---------- Normalizers ---------- */
-const asArray = (input) => {
-  if (Array.isArray(input)) return input;
-  if (input?.data && Array.isArray(input.data)) return input.data;
-  if (input?.rows && Array.isArray(input.rows)) return input.rows;
-  if (input?.items && Array.isArray(input.items)) return input.items;
-  if (input == null || input === "") return [];
-  console.warn("[RevenueMonthlyChart] non-array data received:", input);
-  return [];
-};
-
 export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, onMonthClick }) {
-  const num = (v) => Number(v ?? 0) || 0;
+  const toNum = (v) => Number(v ?? 0) || 0;
   const thb = (n) =>
-    num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    toNum(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const ymLabel = (ym) => {
-    const [y, m] = String(ym || "").split("-");
+    const s = String(ym ?? "");
+    const parts = s.split("-");
+    if (parts.length < 2) return s || "-";
+    const [y, m] = parts;
     const d = new Date(`${y}-${m}-01T00:00:00`);
-    if (Number.isNaN(+d)) return String(ym || "-");
+    if (Number.isNaN(+d)) return s || "-";
     return d.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
   };
 
-  // ---- Helper: คืน breakdown ต่อแถว โดยให้ collected มาก่อน
+  // ---- Helper: breakdown (ปลอดภัยต่อ field ขาด/ชนิดเพี้ยน)
   const toBreakdown = (row = {}) => {
     const billed = {
-      rent:    num(row.rent_amount),
-      water:   num(row.water_amount),
-      electric:num(row.electric_amount),
-      total:   num(row.total_amount ?? row.total ?? row.revenue ?? 0),
-      rooms:   num(row.rooms_count ?? row.rooms ?? 0),
+      rent:    toNum(row.rent_amount),
+      water:   toNum(row.water_amount),
+      electric:toNum(row.electric_amount),
+      total:   toNum(row.total_amount ?? row.total ?? row.revenue),
+      rooms:   toNum(row.rooms_count ?? row.rooms),
     };
 
-    const hasCollectedKeys =
-      ["rent_collected", "water_collected", "electric_collected"].some((k) =>
-        Object.prototype.hasOwnProperty.call(row, k)
-      );
+    const hasCollectedKeys = ["rent_collected","water_collected","electric_collected"]
+      .some((k) => Object.prototype.hasOwnProperty.call(row || {}, k));
 
     const collected = {
-      rent:    num(row.rent_collected),
-      water:   num(row.water_collected),
-      electric:num(row.electric_collected),
-      total:   Object.prototype.hasOwnProperty.call(row, "total_collected")
-                ? num(row.total_collected)
+      rent:    toNum(row.rent_collected),
+      water:   toNum(row.water_collected),
+      electric:toNum(row.electric_collected),
+      total:   Object.prototype.hasOwnProperty.call(row || {}, "total_collected")
+                ? toNum(row.total_collected)
                 : null,
     };
 
-    const useCollectedTotal = collected.total != null ? collected.total : billed.total;
-
     const allCollectedZero = collected.rent === 0 && collected.water === 0 && collected.electric === 0;
-    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && num(row.total_collected) > 0;
+    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && toNum(row.total_collected) > 0;
 
-    const rent     = shouldFallbackCategory ? billed.rent     : (hasCollectedKeys ? collected.rent     : billed.rent);
-    const water    = shouldFallbackCategory ? billed.water    : (hasCollectedKeys ? collected.water    : billed.water);
-    const electric = shouldFallbackCategory ? billed.electric : (hasCollectedKeys ? collected.electric : billed.electric);
-
-    return { rent, water, electric, total: useCollectedTotal, rooms: billed.rooms };
+    return {
+      rent:     shouldFallbackCategory ? billed.rent     : (hasCollectedKeys ? collected.rent     : billed.rent),
+      water:    shouldFallbackCategory ? billed.water    : (hasCollectedKeys ? collected.water    : billed.water),
+      electric: shouldFallbackCategory ? billed.electric : (hasCollectedKeys ? collected.electric : billed.electric),
+      total:    collected.total != null ? collected.total : billed.total,
+      rooms:    billed.rooms,
+    };
   };
-
-  const safe = asArray(data);
 
   // ===== KPI =====
   const kpi = useMemo(() => {
-    const s = safe.map(toBreakdown).reduce(
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map(toBreakdown).reduce(
       (acc, r) => ({
         months: acc.months + 1,
         rent: acc.rent + r.rent,
@@ -74,8 +63,9 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
       }),
       { months: 0, rent: 0, water: 0, electric: 0, total: 0 }
     );
-    return s;
-  }, [safe]);
+  }, [data]);
+
+  const rows = Array.isArray(data) ? data : [];
 
   return (
     <div className="space-y-6">
@@ -102,8 +92,8 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
                 type="number"
                 min={1}
                 max={24}
-                value={months}
-                onChange={(e) => setMonths?.(Number(e.target.value))}
+                value={Number.isFinite(months) ? months : 6}
+                onChange={(e) => setMonths?.(Number(e.target.value) || 1)}
                 className="w-20 pl-2 pr-7 py-1.5 text-right border-0 focus:ring-0 focus:outline-none text-slate-900"
               />
               <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -141,19 +131,19 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {safe.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
                     ไม่มีข้อมูลในช่วงที่เลือก
                   </td>
                 </tr>
               ) : (
-                safe.map((r, i) => {
+                rows.map((r, i) => {
                   const b = toBreakdown(r);
-                  const period = r.period_ym ?? r.period ?? r.month;
+                  const period = r?.period_ym ?? r?.period ?? r?.month ?? "";
                   return (
                     <tr
-                      key={period ?? i}
+                      key={`${period}-${i}`}
                       className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
                       onClick={() => onMonthClick?.(period)}
                       title="คลิกเพื่อดูรายละเอียดเดือนนี้"
@@ -195,7 +185,7 @@ function KPICard({ title, value, icon, tone = "slate" }) {
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{value}</p>
         </div>
         <div className={`w-12 h-12 rounded-full ${th.bg} flex items-center justify-center`}>
-          {React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` })}
+          {React.isValidElement(icon) ? React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` }) : null}
         </div>
       </div>
     </div>
