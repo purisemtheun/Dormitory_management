@@ -1,56 +1,34 @@
-// my-app/src/pages/technician/TechnicianRepairsPage.jsx
+// frontend/src/pages/technician/TechnicianRepairsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import http from "../../services/http";
 import { getToken } from "../../utils/auth";
 
-// ✅ CRA-safe: ใช้ env ของ CRA เท่านั้น
-const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000/api";
-
-/* ---------------- API helpers ---------------- */
+/* ---------------- API helpers (ใช้ axios instance เดิม) ---------------- */
 const api = {
   listMyRepairs: async () => {
-    const r = await fetch(`${API_BASE}/repairs/tech`, {
+    const r = await http.get("/api/repairs/tech", {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || d?.message || "โหลดงานของฉันไม่สำเร็จ");
-    const arr = Array.isArray(d) ? d : [];
-    return arr.filter(x =>
+    // backend คืน array
+    return Array.isArray(r.data) ? r.data.filter(x =>
       ["assigned", "in_progress"].includes(String(x.status || "").toLowerCase())
-    );
+    ) : [];
   },
 
   start: async (repairId) => {
-    const r = await fetch(
-      `${API_BASE}/repairs/tech/${encodeURIComponent(repairId)}/status`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify({ action: "start" }),
-      }
+    const r = await http.patch(`/api/repairs/tech/${encodeURIComponent(repairId)}/status`,
+      { action: "start" },
+      { headers: { Authorization: `Bearer ${getToken()}` } }
     );
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || d?.message || "เริ่มงานไม่สำเร็จ");
-    return d;
+    return r.data;
   },
 
   complete: async (repairId) => {
-    const r = await fetch(
-      `${API_BASE}/repairs/tech/${encodeURIComponent(repairId)}/status`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify({ action: "complete" }),
-      }
+    const r = await http.patch(`/api/repairs/tech/${encodeURIComponent(repairId)}/status`,
+      { action: "complete" },
+      { headers: { Authorization: `Bearer ${getToken()}` } }
     );
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.error || d?.message || "เสร็จสิ้นงานไม่สำเร็จ");
-    return d;
+    return r.data;
   },
 };
 
@@ -90,7 +68,7 @@ export default function TechnicianRepairs() {
       const arr = await api.listMyRepairs();
       setItems(arr);
     } catch (e) {
-      setErr(e.message || "โหลดรายการไม่สำเร็จ");
+      setErr(e?.message || "โหลดรายการไม่สำเร็จ");
       setItems([]);
     } finally {
       setLoading(false);
@@ -120,7 +98,7 @@ export default function TechnicianRepairs() {
         getKey(x) === rid ? { ...x, status: "in_progress" } : x
       ));
     } catch (e) {
-      alert(e.message);
+      alert(e?.message || "เริ่มงานไม่สำเร็จ");
     } finally {
       setBusyId(null);
     }
@@ -133,7 +111,7 @@ export default function TechnicianRepairs() {
       await api.complete(rid);
       setItems(lst => lst.filter(x => getKey(x) !== rid));
     } catch (e) {
-      alert(e.message);
+      alert(e?.message || "เสร็จสิ้นงานไม่สำเร็จ");
     } finally {
       setBusyId(null);
     }

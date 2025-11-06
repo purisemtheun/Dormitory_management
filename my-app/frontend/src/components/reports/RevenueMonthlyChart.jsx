@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
-import { BarChart3, Coins, Droplet, Zap, CalendarRange, ChevronDown } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { reportApi } from "../../api/reports.api";
+import { Droplet, Zap } from "lucide-react";
 
 const arr = (d) =>
   Array.isArray(d) ? d :
@@ -8,174 +9,253 @@ const arr = (d) =>
   Array.isArray(d?.items) ? d.items :
   Array.isArray(d?.result) ? d.result : [];
 
-export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, onMonthClick }) {
-  const num = (v) => Number(v ?? 0) || 0;
-  const thb = (n) => num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const rows = useMemo(() => arr(data), [data]);
+const val = (v, d = 0) => (v === null || v === undefined || v === "" ? d : v);
+const num = (v) => Number(val(v, 0)) || 0;
 
-  const ymLabel = (ym) => {
-    const [y, m] = String(ym).split("-");
-    const d = new Date(`${y}-${m}-01T00:00:00`);
-    return d.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+const roomLabel = (r) => String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
+
+const monthLabel = (ym) => {
+  if (!ym) return "-";
+  const [y, m] = ym.split("-");
+  const dt = new Date(`${y}-${m}-01T00:00:00`);
+  return dt.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+};
+
+const tenantNameOf = (r = {}) => {
+  const name = r.tenant_name ?? r.tenant ?? r.fullname ?? r.name ?? r.tenantName ?? r.tenant_fullname ?? "";
+  const s = String(name || "").trim();
+  return s.length ? s : "-";
+};
+
+export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
+  const [rows, setRows] = useState([]);
+  const [savingId, setSavingId] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+
+  const getMonthlyFn =
+    reportApi?.getMeterMonthlySimple ||
+    reportApi?.meterMonthlySimple ||
+    reportApi?.meterMonthly ||
+    reportApi?.getMeterMonthly;
+
+  const saveFn =
+    reportApi?.meterSaveSimple ||
+    reportApi?.saveMeterSimple ||
+    reportApi?.meterSaveReading;
+
+  const fetchMonth = useCallback(async () => {
+    if (!period || !getMonthlyFn) return;
+    try {
+      setLoading(true);
+      const res = (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
+      const next = arr(res);
+      setRows(next);
+      setPage(1);
+    } catch (e) {
+      console.error(e);
+      setMsg(`โหลดข้อมูลล้มเหลว: ${e?.message || "กรุณาลองอีกครั้ง"}`);
+      setTimeout(() => setMsg(""), 2200);
+    } finally {
+      setLoading(false);
+    }
+  }, [getMonthlyFn, period]);
+
+  useEffect(() => setRows(arr(data)), [data]);
+
+  const summary = useMemo(() => rows.reduce(
+    (acc, r) => {
+      const wu = num(r.water_units);
+      const eu = num(r.electric_units);
+      const wr = num(r.water_rate);
+      const er = num(r.electric_rate);
+      acc.waterUnits += wu;
+      acc.elecUnits += eu;
+      acc.waterAmount += wu * wr;
+      acc.elecAmount += eu * er;
+      return acc;
+    }, { waterUnits: 0, elecUnits: 0, waterAmount: 0, elecAmount: 0 }
+  ), [rows]);
+
+  const updateLocal = (id, patch) => setRows((prev) => prev.map((r) => (r.room_id === id ? { ...r, ...patch } : r)));
+
+  const saveRow = async (r) => {
+    try {
+      if (!saveFn) {
+        setMsg("ไม่พบเมธอด reportApi สำหรับบันทึก (meterSaveSimple)");
+        setTimeout(() => setMsg(""), 2200);
+        return;
+      }
+      setSavingId(r.room_id);
+      setMsg("");
+
+      const payload = {
+        room_id: r.room_id,
+        period_ym: period,
+        water_units: num(r.water_units),
+        electric_units: num(r.electric_units),
+        water_rate: num(r.water_rate),
+        electric_rate: num(r.electric_rate),
+      };
+
+      await saveFn(payload);
+      await fetchMonth();
+
+      setMsg("บันทึกแล้ว");
+      setTimeout(() => setMsg(""), 1600);
+    } catch (e) {
+      setMsg(`บันทึกล้มเหลว: ${e.message || "กรุณาลองอีกครั้ง"}`);
+    } finally {
+      setSavingId(null);
+    }
   };
 
-  const toBreakdown = (row) => {
-    const billed = {
-      rent:    num(row.rent_amount),
-      water:   num(row.water_amount),
-      electric:num(row.electric_amount),
-      total:   num(row.total_amount ?? row.total ?? row.revenue ?? 0),
-      rooms:   num(row.rooms_count ?? row.rooms ?? 0),
-    };
-    const hasCollectedKeys = ["rent_collected","water_collected","electric_collected"]
-      .some((k) => Object.prototype.hasOwnProperty.call(row, k));
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startIdx = (page - 1) * pageSize;
+  const pageRows = rows.slice(startIdx, startIdx + pageSize);
 
-    const collected = {
-      rent:    num(row.rent_collected),
-      water:   num(row.water_collected),
-      electric:num(row.electric_collected),
-      total:   Object.prototype.hasOwnProperty.call(row, "total_collected") ? num(row.total_collected) : null,
-    };
-
-    const useCollectedTotal = collected.total != null ? collected.total : billed.total;
-
-    const allCollectedZero = collected.rent === 0 && collected.water === 0 && collected.electric === 0;
-    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && num(row.total_collected) > 0;
-
-    const rent    = shouldFallbackCategory ? billed.rent    : (hasCollectedKeys ? collected.rent    : billed.rent);
-    const water   = shouldFallbackCategory ? billed.water   : (hasCollectedKeys ? collected.water   : billed.water);
-    const electric= shouldFallbackCategory ? billed.electric: (hasCollectedKeys ? collected.electric: billed.electric);
-
-    return { rent, water, electric, total: useCollectedTotal, rooms: billed.rooms };
-  };
-
-  const kpi = useMemo(() => {
-    const s = rows.map(toBreakdown).reduce(
-      (acc, r) => ({ months: acc.months + 1, rent: acc.rent + r.rent, water: acc.water + r.water, electric: acc.electric + r.electric, total: acc.total + r.total }),
-      { months: 0, rent: 0, water: 0, electric: 0, total: 0 }
-    );
-    return s;
-  }, [rows]);
+  const handleMonthChange = (e) => setPeriod?.(e.target.value);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="mx-auto w-full max-w-[1480px] space-y-6">
+      {/* Header card */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
-        <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
-              <BarChart3 className="w-6 h-6 text-indigo-700" />
-            </div>
+            <span className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-indigo-50 border border-indigo-200">
+              <div className="flex items-center gap-1.5">
+                <Droplet className="w-5 h-5 text-sky-600" />
+                <Zap className="w-5 h-5 text-amber-500" />
+              </div>
+            </span>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900">รายงานรายเดือน</h2>
-              <p className="text-slate-600 text-sm mt-0.5">
-                แสดง <b>ยอดที่เก็บแล้ว (approved)</b> เป็นหลัก • ถ้ายังไม่อนุมัติ/ยังไม่แจกแจงประเภท จะแสดงยอดวางบิลแทน
-              </p>
+              <h2 className="text-2xl font-bold text-slate-900">รายงานค่าน้ำ/ค่าไฟ</h2>
+              <p className="text-slate-600 text-sm mt-0.5">ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • โหลดข้อมูลเดือนล่าสุด</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-2">
-              <CalendarRange className="w-5 h-5 text-slate-500" />
-              <span className="text-sm text-slate-700">เดือนย้อนหลัง</span>
-              <input
-                type="number" min={1} max={24} value={months}
-                onChange={(e) => setMonths?.(Number(e.target.value))}
-                className="w-20 pl-2 pr-7 py-1.5 text-right border-0 focus:ring-0 focus:outline-none text-slate-900"
-              />
-              <ChevronDown className="w-4 h-4 text-slate-400" />
-            </div>
+            <label className="text-sm font-medium text-slate-700">เลือกงวด:</label>
+            <input type="month" value={period || ""} onChange={handleMonthChange}
+                   className="w-[180px] rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" />
+            <button className="rounded-lg bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-60"
+                    onClick={fetchMonth} disabled={!period || loading} title="โหลดข้อมูลล่าสุดของเดือนนี้จากเซิร์ฟเวอร์">
+              {loading ? "กำลังโหลด…" : "โหลดใหม่"}
+            </button>
           </div>
         </div>
       </div>
 
-      {/* KPI */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title={`ค่าเช่า (${kpi.months} เดือน)`} value={`฿ ${thb(kpi.rent)}`} icon={<Coins />} tone="indigo" />
-        <KPICard title="ค่าน้ำ" value={`฿ ${thb(kpi.water)}`} icon={<Droplet />} tone="sky" />
-        <KPICard title="ค่าไฟ" value={`฿ ${thb(kpi.electric)}`} icon={<Zap />} tone="amber" />
-        <KPICard title="รวมทั้งหมด" value={`฿ ${thb(kpi.total)}`} icon={<BarChart3 />} tone="emerald" />
+      {/* Summary */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-900 p-4">
+        <div className="font-semibold">สรุปยอด {monthLabel(period)}</div>
+        <div className="mt-1 text-sm sm:text-base">
+          หน่วยน้ำรวม: <b>{summary.waterUnits.toLocaleString()}</b> หน่วย (
+          <b>{summary.waterAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
+          <span className="px-2 text-amber-400">•</span>
+          หน่วยไฟรวม: <b>{summary.elecUnits.toLocaleString()}</b> หน่วย (
+          <b>{summary.elecAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
+        </div>
       </div>
 
-      {/* Banner */}
-      <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-4 py-3">
-        ยอด<strong>ที่เก็บแล้ว</strong> {kpi.months} เดือนล่าสุด: <span className="font-bold">฿ {thb(kpi.total)}</span>
-        <span className="text-blue-900/70"> (ถ้าเดือนไหนยังไม่อนุมัติหรือไม่แจกแจงประเภท จะแสดงยอดวางบิลแทนเฉพาะค่าน้ำ/ไฟ/เช่า)</span>
-      </div>
-
-      {/* Table */}
+      {/* Table card */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
+          <div className="text-sm text-slate-600">แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว</div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-700">แถว/หน้า</span>
+            <select className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value) || 5); setPage(1); }}>
+              {[5, 10, 15, 20].map((n) => (<option key={n} value={n}>{n}</option>))}
+            </select>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="sticky top-0 z-10 bg-indigo-900 text-white shadow-md">
-                <Th className="text-left">งวด (ปี–เดือน)</Th>
-                <Th className="text-right">ค่าเช่า (฿)</Th>
-                <Th className="text-right">ค่าน้ำ (฿)</Th>
-                <Th className="text-right">ค่าไฟ (฿)</Th>
-                <Th className="text-right">รวม (฿)</Th>
-                <Th className="text-right">จำนวนห้อง</Th>
+              <tr className="sticky top-0 z-10 bg-indigo-900 text-white text-sm">
+                <th className="px-4 py-3 text-left w-16">#</th>
+                <th className="px-4 py-3 text-left w-24">ห้อง</th>
+                <th className="px-4 py-3 text-left">ผู้เช่า</th>
+                <th className="px-4 py-3 text-center w-32">หน่วยน้ำ</th>
+                <th className="px-4 py-3 text-center w-36">เรตน้ำ (บ./หน่วย)</th>
+                <th className="px-4 py-3 text-right w-32">ค่าน้ำ (บ.)</th>
+                <th className="px-4 py-3 text-center w-32">หน่วยไฟ</th>
+                <th className="px-4 py-3 text-center w-36">เรตไฟ (บ./หน่วย)</th>
+                <th className="px-4 py-3 text-right w-32">ค่าไฟ (บ.)</th>
+                <th className="px-4 py-3 text-right w-32">รวม (บ.)</th>
+                <th className="px-4 py-3 text-center w-24">บันทึก</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
-                    ไม่มีข้อมูลในช่วงที่เลือก
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r, i) => {
-                  const b = toBreakdown(r);
-                  const period = r.period_ym ?? r.period ?? r.month;
+
+            <tbody className="divide-y divide-slate-100 text-slate-800">
+              {pageRows.length ? (
+                pageRows.map((r, idx) => {
+                  const wu = num(r.water_units);
+                  const eu = num(r.electric_units);
+                  const wr = num(r.water_rate);
+                  const er = num(r.electric_rate);
+                  const wAmt = wu * wr;
+                  const eAmt = eu * er;
+                  const totalAmt = wAmt + eAmt;
+
                   return (
-                    <tr key={i} className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
-                        onClick={() => onMonthClick?.(period)} title="คลิกเพื่อดูรายละเอียดเดือนนี้">
-                      <td className="px-6 py-4 font-semibold text-slate-900">{ymLabel(period)}</td>
-                      <TdRight>{thb(b.rent)}</TdRight>
-                      <TdRight>{thb(b.water)}</TdRight>
-                      <TdRight>{thb(b.electric)}</TdRight>
-                      <TdRight className="font-bold text-slate-900">{thb(b.total)}</TdRight>
-                      <TdRight>{b.rooms}</TdRight>
+                    <tr key={r.room_id ?? `${idx}-${roomLabel(r)}`} className="hover:bg-slate-50/60 text-[15px]">
+                      <td className="px-4 py-3">{startIdx + idx + 1}</td>
+                      <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
+                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">{tenantNameOf(r)}</td>
+
+                      <td className="px-4 py-2"><input type="number" step="1" value={r.water_units ?? ""} onChange={(e) => updateLocal(r.room_id, { water_units: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
+                      <td className="px-4 py-2"><input type="number" step="0.01" value={r.water_rate ?? ""}  onChange={(e) => updateLocal(r.room_id, { water_rate: e.target.value })}  className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
+                      <td className="px-4 py-3 text-right font-medium">{wAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+
+                      <td className="px-4 py-2"><input type="number" step="1" value={r.electric_units ?? ""} onChange={(e) => updateLocal(r.room_id, { electric_units: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
+                      <td className="px-4 py-2"><input type="number" step="0.01" value={r.electric_rate ?? ""} onChange={(e) => updateLocal(r.room_id, { electric_rate: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
+                      <td className="px-4 py-3 text-right font-medium">{eAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+
+                      <td className="px-4 py-3 text-right font-bold">{totalAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+
+                      <td className="px-4 py-2 text-center">
+                        <button className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-60"
+                                disabled={savingId === r.room_id || loading} onClick={() => saveRow(r)}>
+                          {savingId === r.room_id ? "กำลังบันทึก…" : "บันทึก"}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
+              ) : (
+                <tr>
+                  <td colSpan={11} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
+                    ไม่พบข้อมูลค่าน้ำ/ค่าไฟสำหรับงวด {period || "-"}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  );
-}
 
-function KPICard({ title, value, icon, tone = "slate" }) {
-  const map = {
-    slate:   { text: "text-slate-700",   ring: "border-slate-400",   bg: "bg-slate-50" },
-    indigo:  { text: "text-indigo-700",  ring: "border-indigo-400",  bg: "bg-indigo-50" },
-    sky:     { text: "text-sky-700",     ring: "border-sky-400",     bg: "bg-sky-50" },
-    amber:   { text: "text-amber-700",   ring: "border-amber-400",   bg: "bg-amber-50" },
-    emerald: { text: "text-emerald-700", ring: "border-emerald-400", bg: "bg-emerald-50" },
-  };
-  const th = map[tone] || map.slate;
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 relative overflow-hidden transition-all duration-300 hover:shadow-lg">
-      <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.ring.replace("border-","bg-")}`} />
-      <div className="pl-2 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-slate-500 tracking-wide">{title}</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">{value}</p>
-        </div>
-        <div className={`w-12 h-12 rounded-full ${th.bg} flex items-center justify-center`}>
-          {React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` })}
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
+          <div className="text-sm text-slate-600">หน้า <b>{page}</b> / {totalPages}</div>
+          <div className="flex items-center gap-2">
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>ก่อนหน้า</button>
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>ถัดไป</button>
+          </div>
         </div>
       </div>
+
+      {msg && (
+        <div className={`rounded-xl border px-4 py-3 ${msg.startsWith("บันทึกแล้ว") ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+          {msg}
+        </div>
+      )}
     </div>
   );
-}
-function Th({ children, className = "" }) {
-  return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>;
-}
-function TdRight({ children, className = "" }) {
-  return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>;
 }

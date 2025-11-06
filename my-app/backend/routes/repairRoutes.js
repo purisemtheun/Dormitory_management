@@ -13,22 +13,23 @@ const { verifyToken, authorizeRoles } = require("../middlewares/authMiddleware")
 router.get(
   "/tech",
   verifyToken,
-  authorizeRoles("technician"),
-  repair.getAllRepairs
+  authorizeRoles("technician", "tech"),          // ⬅️ เปิดทั้งสอง role
+  // ถ้ามีฟังก์ชันนี้ให้ใช้เลย จะได้งานเฉพาะ assigned/in_progress
+  repair.myOpenRepairs || repair.getAllRepairs   // ⬅️ fallback ไป getAllRepairs
 );
 
 router.get(
   "/tech/:id",
   verifyToken,
-  authorizeRoles("technician"),
+  authorizeRoles("technician", "tech"),          // ⬅️
   repair.getRepairById
 );
 
 router.patch(
   "/tech/:id/status",
   verifyToken,
-  authorizeRoles("technician"),
-  repair.techSetStatus
+  authorizeRoles("technician", "tech"),          // ⬅️
+  repair.techSetStatus                           // รับ { action: "start" | "complete" }
 );
 
 /* ---------- Create / Read (role จะถูกกรองใน controller) ---------- */
@@ -66,10 +67,7 @@ router.patch(
 
 /* ---------- Dynamic /:id (วางท้ายสุด) ---------- */
 router.get("/:id", verifyToken, repair.getRepairById);
-
 router.patch("/:id", verifyToken, repair.updateRepair);
-
-/* ✅ Delete (เปิดใช้งานจริง) */
 router.delete(
   "/:id",
   verifyToken,

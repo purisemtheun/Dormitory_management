@@ -1,6 +1,7 @@
 // src/pages/admin/AdminReportsPage.jsx
 import React, { useEffect, useState } from "react";
 import { reportApi } from "../../api/reports.api";
+import http from "../../services/http";
 
 // sections
 import RoomsStatusTable from "../../components/reports/RoomsStatusTable";
@@ -10,7 +11,7 @@ import RevenueDailyChart from "../../components/reports/RevenueDailyChart";
 import DebtsTable from "../../components/reports/DebtsTable";
 import UtilitiesTable from "../../components/reports/UtilitiesTable";
 
-// icons (สอดคล้องกับธีม roomstatus)
+// icons
 import {
   ClipboardList,
   Home,
@@ -34,7 +35,16 @@ export default function AdminReportsPage() {
   const [err, setErr] = useState("");
 
   /** Data states */
-  const [roomsStatus, setRoomsStatus] = useState([]);
+  const [roomsStatus, setRoomsStatus] = useState([]); // <— ใช้ตัวนี้แทน rows
+
+  // counters ที่รับมาจาก /reports/rooms-status
+  const [counters, setCounters] = useState({
+    total: 0,
+    vacant: 0,
+    occupied: 0,
+    reserved: 0,
+    pending: 0,
+  });
 
   const [revenueMonthly, setRevenueMonthly] = useState([]);
   const [months, setMonths] = useState(6);
@@ -63,8 +73,20 @@ export default function AdminReportsPage() {
 
         switch (activeTab) {
           case "rooms": {
-            const rows = await reportApi.roomsStatus();
-            if (alive) setRoomsStatus(rows);
+            const res = await http.get("/reports/rooms-status", {
+              headers: { "Cache-Control": "no-store" },
+            });
+            if (!alive) return;
+            const data = res?.data ?? res ?? {};
+            setCounters({
+              total: Number(data.total || 0),
+              vacant: Number(data.vacant || 0),
+              occupied: Number(data.occupied || 0),
+              reserved: Number(data.reserved || 0),
+              pending: Number(data.pending || 0),
+            });
+            // <<< แก้จุดนี้
+            setRoomsStatus(Array.isArray(data.rooms) ? data.rooms : []);
             break;
           }
           case "revenue-monthly": {
@@ -73,7 +95,10 @@ export default function AdminReportsPage() {
             break;
           }
           case "revenue-daily": {
-            const rows = await reportApi.revenueDaily(dateRange.from, dateRange.to);
+            const rows = await reportApi.revenueDaily(
+              dateRange.from,
+              dateRange.to
+            );
             if (alive) setRevenueDaily(rows);
             break;
           }
@@ -83,7 +108,10 @@ export default function AdminReportsPage() {
             break;
           }
           case "payments": {
-            const rows = await reportApi.payments(paymentRange.from, paymentRange.to);
+            const rows = await reportApi.payments(
+              paymentRange.from,
+              paymentRange.to
+            );
             if (alive) setPayments(rows);
             break;
           }
@@ -108,7 +136,7 @@ export default function AdminReportsPage() {
     };
   }, [activeTab, months, dateRange, asOf, paymentRange, utilityPeriod]);
 
-  /** Tab pill (ธีมเดียวกับ Pill ในหน้า roomstatus) */
+  /** Tab pill */
   const TabBtn = ({ id, icon, children }) => {
     const isActive = activeTab === id;
     return (
@@ -124,7 +152,6 @@ export default function AdminReportsPage() {
           "bg-white hover:shadow-md",
           "border-slate-300 text-slate-800",
           "focus:outline-none focus:ring-2 focus:ring-indigo-500",
-          // active styles (match Pill: bg indigo / text white / border indigo)
           "data-[active=true]:bg-indigo-600 data-[active=true]:text-white data-[active=true]:border-indigo-600",
         ].join(" ")}
       >
@@ -136,7 +163,7 @@ export default function AdminReportsPage() {
 
   return (
     <div className="p-5 sm:p-6 lg:p-8 space-y-4">
-      {/* Header – โทนเดียวกับ RoomsStatusTable */}
+      {/* Header */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
         <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
           <div className="flex items-center gap-3">
@@ -155,11 +182,8 @@ export default function AdminReportsPage() {
 
       {/* Card หลัก */}
       <section className="border border-slate-200 rounded-2xl bg-white shadow-sm">
-        {/* Tabs (pill group) */}
-        <nav
-          role="tablist"
-          className="flex flex-wrap gap-2 p-4 border-b border-slate-200"
-        >
+        {/* Tabs */}
+        <nav role="tablist" className="flex flex-wrap gap-2 p-4 border-b border-slate-200">
           <TabBtn id="rooms" icon={<Home className="w-4 h-4" />}>สถานะห้อง</TabBtn>
           <TabBtn id="revenue-monthly" icon={<BarChart3 className="w-4 h-4" />}>รายรับรายเดือน</TabBtn>
           <TabBtn id="revenue-daily" icon={<CalendarDays className="w-4 h-4" />}>รายรับรายวัน</TabBtn>
@@ -178,7 +202,9 @@ export default function AdminReportsPage() {
             </div>
           ) : (
             <div className="pt-3" id={`panel-${activeTab}`} role="tabpanel">
-              {activeTab === "rooms" && <RoomsStatusTable data={roomsStatus} />}
+              {activeTab === "rooms" && (
+                <RoomsStatusTable data={roomsStatus} counters={counters} />
+              )}
 
               {activeTab === "revenue-monthly" && (
                 <RevenueMonthlyChart

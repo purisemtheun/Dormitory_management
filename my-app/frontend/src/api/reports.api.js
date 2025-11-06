@@ -1,49 +1,51 @@
 // frontend/src/api/reports.api.js
-const BASE = process.env.REACT_APP_API_BASE || process.env.REACT_APP_API || "http://localhost:3000/api";
-const TOKEN_KEY = process.env.REACT_APP_TOKEN_KEY || "dm_token";
+import http from "../services/http";
 
-function authHeaders() {
-  try {
-    const t = localStorage.getItem(TOKEN_KEY);
-    return t ? { Authorization: `Bearer ${t}` } : {};
-  } catch {
-    return {};
-  }
-}
+const GET  = (url, params) => http.get(url, { params });
+const POST = (url, data)   => http.post(url, data);
 
-async function j(url, opts = {}) {
-  const r = await fetch(url, {
-    method: "GET",
-    ...opts,
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...(opts.headers || {}) },
-    credentials: "include",
-  });
-  if (!r.ok) {
-    // ตัดข้อความแบบอ่านง่าย (เช่น 502)
-    const msg = `${r.status} ${r.statusText}`;
-    throw new Error(msg);
-  }
-  const data = await r.json().catch(() => null);
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.data)) return data.data;
-  return data || {};
-}
+/**
+ * Frontend API wrapper ที่ “เข้ากันได้ย้อนหลัง”
+ * - มีเมธอดแบบ flat ที่ ReportsPage และ components เรียกอยู่
+ * - มี alias แบบ object (revenue.daily / revenue.monthly) เผื่อโค้ดเก่า
+ */
+const reportApi = {
+  /* ---------- Rooms ---------- */
+  roomsStatus: () => GET("/reports/rooms-status"),
 
-export const reportApi = {
-  // Rooms
-  roomsStatus      : () => j(`${BASE}/reports/rooms-status`),
+  /* ---------- Revenue ---------- */
+  // ใช้สรุปรายเดือน (รวมทั้งหอ) จาก backend /monthly-summary
+  revenueMonthly: (months = 6) => GET("/reports/monthly-summary", { months }),
+  // รายวัน สำหรับช่วงวันที่ที่เลือก
+  revenueDaily: (from, to) => GET("/reports/revenue-daily", { from, to }),
 
-  // Revenue
-  revenueMonthly   : (months = 6) => j(`${BASE}/reports/monthly-summary?months=${months}`),
-  revenueDaily     : (from, to)   => j(`${BASE}/reports/revenue?granularity=daily&from=${from}&to=${to}`),
+  // alias รูปแบบเดิม
+  revenue: {
+    monthly: (params) =>
+      GET("/reports/monthly-summary", { months: params?.months ?? params ?? 6 }),
+    daily: (params) => GET("/reports/revenue-daily", params),
+  },
 
-  // Debts (ตามใบแจ้งหนี้)
-  debts            : (asOf) => j(`${BASE}/admin/debts/by-invoice${asOf ? `?asOf=${asOf}` : ""}`),
+  /* ---------- Payments / Debts ---------- */
+  payments: (from, to) => GET("/reports/payments", { from, to }),
+  debts: (asOf) => GET("/reports/debts", asOf ? { asOf } : {}),
 
-  // Payments
-  payments         : (from, to) => j(`${BASE}/reports/payments?from=${from}&to=${to}`),
+  /* ---------- Utilities (น้ำ/ไฟ) ---------- */
+  meterMonthly: (ym) => GET("/reports/meter-monthly", { ym }),
+  meterMonthlySimple: (ym) => GET("/reports/meter-monthly", { ym }),
+  getMeterMonthly: (ym) => GET("/reports/meter-monthly", { ym }),
+  getMeterMonthlySimple: (args) =>
+    GET("/reports/meter-monthly", { ym: args?.ym ?? args }),
 
-  // Utilities (meters)
-  meterMonthly     : (ym) => j(`${BASE}/reports/meter-monthly?ym=${ym}`),
-  meterSaveSimple  : (payload) => j(`${BASE}/reports/meter/save-simple`, { method: "POST", body: JSON.stringify(payload) }),
+  meterSaveSimple: (payload) => POST("/reports/meter/save-simple", payload),
+  saveMeterSimple: (payload) => POST("/reports/meter/save-simple", payload),
+  meterSaveReading: (payload) => POST("/reports/meter/save-simple", payload),
+
+  toggleMeterLock: (payload) => POST("/reports/meter/toggle-lock", payload),
+
+  /* ---------- generic ---------- */
+  get: (path, params) => GET(path, params),
 };
+
+export { reportApi };
+export default reportApi;

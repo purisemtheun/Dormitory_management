@@ -1,4 +1,6 @@
+// backend/controllers/techRepairController.js
 const db = require("../config/db");
+const STATUS = require("./repairStatus"); // Repair Status constants
 const { createNotification } = require("../services/notification");
 const { pushLineAfterNotification } = require("../services/notifyAfterInsert");
 
@@ -8,7 +10,7 @@ const PUBLIC_BASE_URL =
     process.env.PUBLIC_BASE_URL.replace(/\/+$/, "")) ||
   `http://localhost:${PORT}`;
 
-/* ================= Helpers ================= */
+/* ================= Helpers (จากโค้ดใหม่) ================= */
 async function getConn() {
   return typeof db.getConnection === "function" ? await db.getConnection() : db;
 }
@@ -62,12 +64,12 @@ function extractNameAndRoom(label) {
 async function getLatestTenantByUser(conn, userId) {
   const [[row]] = await conn.query(
     `SELECT tenant_id
-       FROM tenants
-      WHERE user_id = ?
-        AND (is_deleted = 0 OR is_deleted IS NULL)
-      ORDER BY COALESCE(checkin_date,'1970-01-01') DESC,
-               CAST(REPLACE(tenant_id,'T','') AS UNSIGNED) DESC
-      LIMIT 1`,
+      FROM tenants
+     WHERE user_id = ?
+       AND (is_deleted = 0 OR is_deleted IS NULL)
+     ORDER BY COALESCE(checkin_date,'1970-01-01') DESC,
+              CAST(REPLACE(tenant_id,'T','') AS UNSIGNED) DESC
+     LIMIT 1`,
     [userId]
   );
   return row?.tenant_id || null;
@@ -102,8 +104,8 @@ async function resolveTenantId(conn, input) {
     if (room && room !== "-") {
       const [[tRoom]] = await conn.query(
         `SELECT t.tenant_id
-           FROM tenants t
-           JOIN rooms r ON r.room_id = t.room_id
+            FROM tenants t
+            JOIN rooms r ON r.room_id = t.room_id
           WHERE t.user_id = ?
             AND r.room_number COLLATE utf8mb4_unicode_ci = ?
             AND (t.is_deleted = 0 OR t.is_deleted IS NULL)
@@ -125,9 +127,9 @@ async function resolveTenantId(conn, input) {
   if (room && room !== "-") {
     const [[t2]] = await conn.query(
       `SELECT t.tenant_id
-         FROM tenants t
-         JOIN rooms r ON r.room_id = t.room_id
-         JOIN users u ON u.id = t.user_id
+          FROM tenants t
+          JOIN rooms r ON r.room_id = t.room_id
+          JOIN users u ON u.id = t.user_id
         WHERE (u.name COLLATE utf8mb4_unicode_ci LIKE CONCAT('%',?,'%')
             OR u.fullname COLLATE utf8mb4_unicode_ci LIKE CONCAT('%',?,'%'))
           AND r.room_number COLLATE utf8mb4_unicode_ci = ?
@@ -148,7 +150,96 @@ async function resolveTenantId(conn, input) {
   return null;
 }
 
-/* ================= Endpoints ================= */
+/* ================= Endpoints สำหรับ Repair (โค้ดเดิม) ================= */
+
+/* 👷 ช่าง: ดูงานของตัวเอง (ASSIGNED + IN_PROGRESS) */
+exports.myOpenRepairs = async (req, res) => {
+  try {
+    const techId = req.user.id;
+
+    const [rows] = await db.query(
+      `SELECT r.*,
+              rm.room_number AS room_no,
+              COALESCE(NULLIF(u.fullname,''), NULLIF(u.name,''), u.email) AS tenant_name
+       FROM repairs r
+       LEFT JOIN rooms   rm ON rm.room_id = r.room_id
+       LEFT JOIN tenants t  ON t.tenant_id = r.tenant_id
+       LEFT JOIN users   u  ON u.id       = t.user_id
+       WHERE COALESCE(r.assigned_technician_id, r.assigned_to) = ?
+         AND r.status IN (?, ?)
+       ORDER BY r.updated_at DESC`,
+      [techId, STATUS.ASSIGNED ?? "assigned", STATUS.IN_PROGRESS ?? "in_progress"]
+    );
+
+    const out = rows.map(r => ({ ...r, status: String(r.status || "").toLowerCase() }));
+    res.json(out);
+  } catch (err) {
+    console.error("❌ myOpenRepairs error:", err);
+    res.status(500).json({ message: "ไม่สามารถดึงงานของช่างได้", error: err.message });
+  }
+};
+
+/* 🟨 ช่าง: เริ่มทำงาน */
+exports.startRepair = async (req, res) => {
+  try {
+    const techId = req.user.id;
+    const { id } = req.params;
+
+    const [chk] = await db.query(
+      "SELECT status FROM repairs WHERE repair_id = ? AND COALESCE(assigned_technician_id, assigned_to) = ? LIMIT 1",
+      [id, techId]
+    );
+    if (!chk.length) return res.status(403).json({ message: "ไม่มีสิทธิ์ในงานนี้" });
+    if (String(chk[0].status).toLowerCase() !== String(STATUS.ASSIGNED ?? "assigned"))
+      return res.status(409).json({ message: "งานนี้ไม่อยู่สถานะพร้อมเริ่ม" });
+
+    await db.query(
+      `UPDATE repairs
+       SET status = ?, started_at = NOW(), updated_at = NOW()
+       WHERE repair_id = ?`,
+      [STATUS.IN_PROGRESS ?? "in_progress", id]
+    );
+
+    // TODO: อาจเพิ่มการแจ้งเตือน
+    
+    res.json({ message: "เริ่มงานซ่อมเรียบร้อย", repair_id: id, status: STATUS.IN_PROGRESS ?? "in_progress" });
+  } catch (err) {
+    console.error("❌ startRepair error:", err);
+    res.status(500).json({ message: "ไม่สามารถเริ่มงานได้", error: err.message });
+  }
+};
+
+/* 🟩 ช่าง: เสร็จสิ้นงาน */
+exports.completeRepair = async (req, res) => {
+  try {
+    const techId = req.user.id;
+    const { id } = req.params;
+
+    const [chk] = await db.query(
+      "SELECT status FROM repairs WHERE repair_id = ? AND COALESCE(assigned_technician_id, assigned_to) = ? LIMIT 1",
+      [id, techId]
+    );
+    if (!chk.length) return res.status(403).json({ message: "ไม่มีสิทธิ์ในงานนี้" });
+    if (String(chk[0].status).toLowerCase() !== String(STATUS.IN_PROGRESS ?? "in_progress"))
+      return res.status(409).json({ message: "งานนี้ยังไม่ได้เริ่ม หรือเสร็จแล้ว" });
+
+    await db.query(
+      `UPDATE repairs
+       SET status = ?, completed_at = NOW(), updated_at = NOW()
+       WHERE repair_id = ?`,
+      [STATUS.DONE ?? "done", id]
+    );
+
+    // TODO: อาจเพิ่มการแจ้งเตือน
+    
+    res.json({ message: "เสร็จสิ้นงานซ่อมเรียบร้อย", repair_id: id, status: STATUS.DONE ?? "done" });
+  } catch (err) {
+    console.error("❌ completeRepair error:", err);
+    res.status(500).json({ message: "ไม่สามารถอัปเดตงานเสร็จสิ้นได้", error: err.message });
+  }
+};
+
+/* ================= Endpoints สำหรับ Invoice & Tenant (โค้ดใหม่) ================= */
 
 async function listRecentInvoices(req, res) {
   try {
@@ -231,7 +322,7 @@ async function getTenantOptions(_req, res) {
     const [rows] = await db.query(`
       SELECT t.tenant_id AS value,
              CONCAT(COALESCE(u.fullname, u.name, u.email),
-                    ' — ห้อง ', COALESCE(r.room_number,'-')) AS label
+                     ' — ห้อง ', COALESCE(r.room_number,'-')) AS label
       FROM tenants t
       LEFT JOIN users u ON u.id = t.user_id
       LEFT JOIN rooms r ON r.room_id = t.room_id
@@ -273,7 +364,7 @@ async function createInvoice(req, res) {
 
     const [[t]] = await conn.query(
       `SELECT tenant_id, room_id
-         FROM tenants
+          FROM tenants
         WHERE tenant_id = ?
           AND (is_deleted = 0 OR is_deleted IS NULL)
         LIMIT 1`,
@@ -298,11 +389,11 @@ async function createInvoice(req, res) {
 
     const [ins] = await conn.query(
       `INSERT INTO invoices
-         (invoice_no, tenant_id, room_id, period_ym,
-          amount, due_date, status,
-          rent_amount, water_amount, electric_amount,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())`,
+          (invoice_no, tenant_id, room_id, period_ym,
+           amount, due_date, status,
+           rent_amount, water_amount, electric_amount,
+           created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())`,
       [invoice_no, effectiveTenantId, t.room_id || null, period_ym,
        total, finalDue, rent, water, elec]
     );
@@ -321,11 +412,11 @@ async function createInvoice(req, res) {
 
     const [[created]] = await conn.query(
       `SELECT
-         i.id AS invoice_id, i.invoice_no, i.tenant_id, i.room_id, i.period_ym,
-         i.amount, i.status, i.due_date, i.paid_at, i.slip_url,
-         i.rent_amount, i.water_amount, i.electric_amount,
-         i.created_at, i.updated_at
-       FROM invoices i WHERE i.id = ? LIMIT 1`,
+          i.id AS invoice_id, i.invoice_no, i.tenant_id, i.room_id, i.period_ym,
+          i.amount, i.status, i.due_date, i.paid_at, i.slip_url,
+          i.rent_amount, i.water_amount, i.electric_amount,
+          i.created_at, i.updated_at
+        FROM invoices i WHERE i.id = ? LIMIT 1`,
       [ins.insertId]
     );
 
@@ -361,9 +452,9 @@ async function generateMonth(req, res) {
          LEFT JOIN rooms r ON r.room_id = t.room_id
         WHERE (t.is_deleted = 0 OR t.is_deleted IS NULL)
           AND NOT EXISTS (
-                SELECT 1 FROM invoices i
-                 WHERE i.tenant_id = t.tenant_id
-                   AND i.period_ym = ?
+                 SELECT 1 FROM invoices i
+                  WHERE i.tenant_id = t.tenant_id
+                    AND i.period_ym = ?
               )`,
       [month]
     );
@@ -390,11 +481,11 @@ async function generateMonth(req, res) {
 
       await conn.query(
         `INSERT INTO invoices
-           (invoice_no, tenant_id, room_id, period_ym,
-            amount, due_date, status,
-            rent_amount, water_amount, electric_amount,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())`,
+            (invoice_no, tenant_id, room_id, period_ym,
+             amount, due_date, status,
+             rent_amount, water_amount, electric_amount,
+             created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, NOW(), NOW())`,
         [invoice_no, t.tenant_id, t.room_id || null, month, total, due_date, rent, water, elec]
       );
       createdCount++;
@@ -435,7 +526,7 @@ async function decideInvoice(req, res) {
 
     const [[inv]] = await conn.query(
       `SELECT id, tenant_id, invoice_no, amount, due_date, status, slip_url
-         FROM invoices
+          FROM invoices
         WHERE id = ? FOR UPDATE`,
       [invoiceId]
     );
@@ -447,7 +538,7 @@ async function decideInvoice(req, res) {
     if (action === "approve") {
       const [pending] = await conn.query(
         `SELECT payment_id
-           FROM payments
+            FROM payments
           WHERE invoice_id = ?
             AND status = 'pending'
           ORDER BY payment_date DESC, payment_id DESC
@@ -475,8 +566,8 @@ async function decideInvoice(req, res) {
 
         await conn.query(
           `INSERT INTO payments
-             (payment_id, invoice_id, amount, payment_date, slip_url, verified_by, status, note)
-           VALUES (?,?,?,?,?,?, 'approved', NULL)`,
+              (payment_id, invoice_id, amount, payment_date, slip_url, verified_by, status, note)
+            VALUES (?,?,?,?,?,?, 'approved', NULL)`,
           [
             usedPaymentId,
             inv.id,
@@ -490,8 +581,8 @@ async function decideInvoice(req, res) {
 
       await conn.query(
         `UPDATE invoices
-            SET status='paid', paid_at=NOW(), updated_at=NOW()
-          WHERE id=?`,
+             SET status='paid', paid_at=NOW(), updated_at=NOW()
+           WHERE id=?`,
         [invoiceId]
       );
 
@@ -520,18 +611,18 @@ async function decideInvoice(req, res) {
     // reject
     await conn.query(
       `UPDATE payments
-          SET status='rejected'
-        WHERE invoice_id = ?
-          AND status = 'pending'`,
+           SET status='rejected'
+         WHERE invoice_id = ?
+           AND status = 'pending'`,
       [invoiceId]
     );
 
     await conn.query(
       `UPDATE invoices
-          SET status = CASE WHEN CURDATE() > due_date THEN 'overdue' ELSE 'unpaid' END,
-              paid_at = NULL,
-              updated_at = NOW()
-        WHERE id=?`,
+           SET status = CASE WHEN CURDATE() > due_date THEN 'overdue' ELSE 'unpaid' END,
+               paid_at = NULL,
+               updated_at = NOW()
+         WHERE id=?`,
       [invoiceId]
     );
 
@@ -568,7 +659,7 @@ async function cancelInvoice(req, res) {
 
     const [found] = await db.query(
       `SELECT id, tenant_id, invoice_no
-         FROM invoices
+          FROM invoices
         WHERE ${useInvoiceNo ? "invoice_no" : "id"} = ?
         LIMIT 1`,
       [key]
@@ -580,9 +671,9 @@ async function cancelInvoice(req, res) {
 
     const [r] = await db.query(
       `UPDATE invoices
-          SET status='canceled', updated_at = NOW()
-        WHERE ${useInvoiceNo ? "invoice_no" : "id"} = ?
-          AND status IN ('unpaid','pending','overdue')`,
+           SET status='canceled', updated_at = NOW()
+         WHERE ${useInvoiceNo ? "invoice_no" : "id"} = ?
+           AND status IN ('unpaid','pending','overdue')`,
       [key]
     );
     if (!r.affectedRows) {
@@ -613,7 +704,7 @@ async function resendInvoiceNotification(req, res) {
     const id = req.params.id;
     const [[inv]] = await db.query(
       `SELECT id, tenant_id, invoice_no, amount, period_ym, due_date
-         FROM invoices WHERE id = ? LIMIT 1`,
+          FROM invoices WHERE id = ? LIMIT 1`,
       [id]
     );
     if (!inv) return res.status(404).json({ error: "invoice not found" });
@@ -637,13 +728,21 @@ async function resendInvoiceNotification(req, res) {
   }
 }
 
+/* ================= Exports (รวมทั้งเก่าและใหม่) ================= */
+
 module.exports = {
+  // Repair Endpoints (จากโค้ดเดิม)
+  myOpenRepairs: exports.myOpenRepairs,
+  startRepair: exports.startRepair,
+  completeRepair: exports.completeRepair,
+
+  // Invoice Endpoints (จากโค้ดใหม่)
   listRecentInvoices,
   getPendingInvoices,
   getTenantOptions,
   createInvoice,
   generateMonth,
-  decideInvoice,          // ✅ ใช้ปุ่มเดิมอนุมัติ/ปฏิเสธได้แล้ว
+  decideInvoice,
   cancelInvoice,
   resendInvoiceNotification,
-};
+};พำ

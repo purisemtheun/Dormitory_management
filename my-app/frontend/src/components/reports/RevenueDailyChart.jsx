@@ -1,33 +1,163 @@
 import React, { useMemo } from "react";
-import { CalendarRange, BarChart3, Receipt, ChevronDown } from "lucide-react";
+import { BarChart3, Coins, Droplet, Zap, CalendarRange, ChevronDown } from "lucide-react";
 
-/* ========================= helpers ========================= */
-function normalizeDate(v) {
-  if (!v) return "";
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+const arr = (d) =>
+  Array.isArray(d) ? d :
+  Array.isArray(d?.rows) ? d.rows :
+  Array.isArray(d?.data) ? d.data :
+  Array.isArray(d?.items) ? d.items :
+  Array.isArray(d?.result) ? d.result : [];
 
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s.slice(0, 10);
-  // local day string (เลี่ยง UTC shift)
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, onMonthClick }) {
+  const num = (v) => Number(v ?? 0) || 0;
+  const thb = (n) => num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const rows = useMemo(() => arr(data), [data]);
+
+  const ymLabel = (ym) => {
+    const [y, m] = String(ym).split("-");
+    const d = new Date(`${y}-${m}-01T00:00:00`);
+    return d.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+  };
+
+  const toBreakdown = (row) => {
+    const billed = {
+      rent:    num(row.rent_amount),
+      water:   num(row.water_amount),
+      electric:num(row.electric_amount),
+      total:   num(row.total_amount ?? row.total ?? row.revenue ?? 0),
+      rooms:   num(row.rooms_count ?? row.rooms ?? 0),
+    };
+    const hasCollectedKeys = ["rent_collected","water_collected","electric_collected"]
+      .some((k) => Object.prototype.hasOwnProperty.call(row, k));
+
+    const collected = {
+      rent:    num(row.rent_collected),
+      water:   num(row.water_collected),
+      electric:num(row.electric_collected),
+      total:   Object.prototype.hasOwnProperty.call(row, "total_collected") ? num(row.total_collected) : null,
+    };
+
+    const useCollectedTotal = collected.total != null ? collected.total : billed.total;
+
+    const allCollectedZero = collected.rent === 0 && collected.water === 0 && collected.electric === 0;
+    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && num(row.total_collected) > 0;
+
+    const rent    = shouldFallbackCategory ? billed.rent    : (hasCollectedKeys ? collected.rent    : billed.rent);
+    const water   = shouldFallbackCategory ? billed.water   : (hasCollectedKeys ? collected.water   : billed.water);
+    const electric= shouldFallbackCategory ? billed.electric: (hasCollectedKeys ? collected.electric: billed.electric);
+
+    return { rent, water, electric, total: useCollectedTotal, rooms: billed.rooms };
+  };
+
+  const kpi = useMemo(() => {
+    const s = rows.map(toBreakdown).reduce(
+      (acc, r) => ({ months: acc.months + 1, rent: acc.rent + r.rent, water: acc.water + r.water, electric: acc.electric + r.electric, total: acc.total + r.total }),
+      { months: 0, rent: 0, water: 0, electric: 0, total: 0 }
+    );
+    return s;
+  }, [rows]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
+        <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
+              <BarChart3 className="w-6 h-6 text-indigo-700" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">รายงานรายเดือน</h2>
+              <p className="text-slate-600 text-sm mt-0.5">
+                แสดง <b>ยอดที่เก็บแล้ว (approved)</b> เป็นหลัก • ถ้ายังไม่อนุมัติ/ยังไม่แจกแจงประเภท จะแสดงยอดวางบิลแทน
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-2">
+              <CalendarRange className="w-5 h-5 text-slate-500" />
+              <span className="text-sm text-slate-700">เดือนย้อนหลัง</span>
+              <input
+                type="number" min={1} max={24} value={months}
+                onChange={(e) => setMonths?.(Number(e.target.value))}
+                className="w-20 pl-2 pr-7 py-1.5 text-right border-0 focus:ring-0 focus:outline-none text-slate-900"
+              />
+              <ChevronDown className="w-4 h-4 text-slate-400" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard title={`ค่าเช่า (${kpi.months} เดือน)`} value={`฿ ${thb(kpi.rent)}`} icon={<Coins />} tone="indigo" />
+        <KPICard title="ค่าน้ำ" value={`฿ ${thb(kpi.water)}`} icon={<Droplet />} tone="sky" />
+        <KPICard title="ค่าไฟ" value={`฿ ${thb(kpi.electric)}`} icon={<Zap />} tone="amber" />
+        <KPICard title="รวมทั้งหมด" value={`฿ ${thb(kpi.total)}`} icon={<BarChart3 />} tone="emerald" />
+      </div>
+
+      {/* Banner */}
+      <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-4 py-3">
+        ยอด<strong>ที่เก็บแล้ว</strong> {kpi.months} เดือนล่าสุด: <span className="font-bold">฿ {thb(kpi.total)}</span>
+        <span className="text-blue-900/70"> (ถ้าเดือนไหนยังไม่อนุมัติหรือไม่แจกแจงประเภท จะแสดงยอดวางบิลแทนเฉพาะค่าน้ำ/ไฟ/เช่า)</span>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="sticky top-0 z-10 bg-indigo-900 text-white shadow-md">
+                <Th className="text-left">งวด (ปี–เดือน)</Th>
+                <Th className="text-right">ค่าเช่า (฿)</Th>
+                <Th className="text-right">ค่าน้ำ (฿)</Th>
+                <Th className="text-right">ค่าไฟ (฿)</Th>
+                <Th className="text-right">รวม (฿)</Th>
+                <Th className="text-right">จำนวนห้อง</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
+                    ไม่มีข้อมูลในช่วงที่เลือก
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r, i) => {
+                  const b = toBreakdown(r);
+                  const period = r.period_ym ?? r.period ?? r.month;
+                  return (
+                    <tr key={i} className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
+                        onClick={() => onMonthClick?.(period)} title="คลิกเพื่อดูรายละเอียดเดือนนี้">
+                      <td className="px-6 py-4 font-semibold text-slate-900">{ymLabel(period)}</td>
+                      <TdRight>{thb(b.rent)}</TdRight>
+                      <TdRight>{thb(b.water)}</TdRight>
+                      <TdRight>{thb(b.electric)}</TdRight>
+                      <TdRight className="font-bold text-slate-900">{thb(b.total)}</TdRight>
+                      <TdRight>{b.rooms}</TdRight>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-const toNum = (v) => Number(v ?? 0) || 0;
-const thb = (n) => toNum(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/* ========================= UI pieces ========================= */
 function KPICard({ title, value, icon, tone = "slate" }) {
   const map = {
     slate:   { text: "text-slate-700",   ring: "border-slate-400",   bg: "bg-slate-50" },
     indigo:  { text: "text-indigo-700",  ring: "border-indigo-400",  bg: "bg-indigo-50" },
     sky:     { text: "text-sky-700",     ring: "border-sky-400",     bg: "bg-sky-50" },
-    emerald: { text: "text-emerald-700", ring: "border-emerald-400", bg: "bg-emerald-50" },
     amber:   { text: "text-amber-700",   ring: "border-amber-400",   bg: "bg-amber-50" },
-    violet:  { text: "text-violet-700",  ring: "border-violet-400",  bg: "bg-violet-50" },
+    emerald: { text: "text-emerald-700", ring: "border-emerald-400", bg: "bg-emerald-50" },
   };
   const th = map[tone] || map.slate;
-
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 relative overflow-hidden transition-all duration-300 hover:shadow-lg">
       <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.ring.replace("border-","bg-")}`} />
@@ -37,7 +167,7 @@ function KPICard({ title, value, icon, tone = "slate" }) {
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{value}</p>
         </div>
         <div className={`w-12 h-12 rounded-full ${th.bg} flex items-center justify-center`}>
-          {React.isValidElement(icon) ? React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` }) : null}
+          {React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` })}
         </div>
       </div>
     </div>
@@ -48,123 +178,4 @@ function Th({ children, className = "" }) {
 }
 function TdRight({ children, className = "" }) {
   return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>;
-}
-
-/* ========================= Component ========================= */
-export default function RevenueDailyChart({ data = [], range = { from: "", to: "" }, setRange, onDateClick }) {
-  const items = Array.isArray(data) ? data : [];
-
-  const rows = useMemo(() => {
-    return items
-      .map((r = {}) => {
-        const dateRaw = r.period ?? r.date ?? r.report_date ?? r.paid_at ?? r.payment_date ?? "";
-        const amt = toNum(r.revenue ?? r.total);
-        const paid = toNum(r.paid ?? r.count ?? r.payments_count);
-        return { _date: normalizeDate(dateRaw), amount: amt, paid };
-      })
-      .filter((x) => x._date)
-      .sort((a, b) => a._date.localeCompare(b._date));
-  }, [items]);
-
-  const kpi = useMemo(() => {
-    const total = rows.reduce((s, r) => s + r.amount, 0);
-    const count = rows.length;
-    const avg = count ? total / count : 0;
-    const max = rows.reduce((m, r) => Math.max(m, r.amount), 0);
-    const totalPaid = rows.reduce((s, r) => s + (r.paid || 0), 0);
-    return { total, avg, max, days: count, totalPaid };
-  }, [rows]);
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
-        <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
-              <CalendarRange className="w-6 h-6 text-indigo-700" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900">รายงานรายวัน</h2>
-              <p className="text-slate-600 text-sm mt-0.5">สรุปรายรับตามวัน • รวมทั้งวัน • เฉลี่ยต่อวัน • จำนวนรายการชำระ</p>
-            </div>
-          </div>
-
-          {/* Controls */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-2">
-              <CalendarRange className="w-5 h-5 text-slate-500" />
-              <span className="text-sm text-slate-700">ช่วงวันที่</span>
-
-              <input
-                type="date"
-                value={range?.from || ""}
-                onChange={(e) => setRange?.((p) => ({ ...(p || {}), from: e.target.value }))}
-                className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
-              />
-              <span className="text-slate-400">ถึง</span>
-              <input
-                type="date"
-                value={range?.to || ""}
-                onChange={(e) => setRange?.((p) => ({ ...(p || {}), to: e.target.value }))}
-                className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
-              />
-              <ChevronDown className="w-4 h-4 text-slate-400" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title={`รวม (${kpi.days} วัน)`} value={`฿ ${thb(kpi.total)}`} icon={<BarChart3 />} tone="emerald" />
-        <KPICard title="เฉลี่ยต่อวัน" value={`฿ ${thb(kpi.avg)}`} icon={<BarChart3 />} tone="sky" />
-        <KPICard title="สูงสุดต่อวัน" value={`฿ ${thb(kpi.max)}`} icon={<BarChart3 />} tone="violet" />
-        <KPICard title="จำนวนการชำระ (ใบ)" value={kpi.totalPaid.toLocaleString()} icon={<Receipt />} tone="amber" />
-      </div>
-
-      {/* Summary banner */}
-      <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-4 py-3">
-        ยอดรวมช่วง {range?.from || "-"} ถึง {range?.to || "-"}:&nbsp;
-        <span className="font-bold">฿ {thb(kpi.total)}</span>
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="sticky top-0 z-10 bg-indigo-900 text-white shadow-md">
-                <Th className="text-left">วันที่</Th>
-                <Th className="text-right">รายรับ (฿)</Th>
-                <Th className="text-right">จำนวนรายการ (ใบ)</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
-                    ไม่มีข้อมูลรายรับในช่วงที่เลือก
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r, i) => (
-                  <tr
-                    key={`${r._date}-${i}`}
-                    className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
-                    onClick={() => onDateClick?.(r._date)}
-                    title="คลิกเพื่อดูรายละเอียดวันนี้"
-                  >
-                    <td className="px-6 py-4 font-semibold text-slate-900">{r._date}</td>
-                    <TdRight className="font-bold text-slate-900">{thb(r.amount)}</TdRight>
-                    <TdRight>{(r.paid || 0).toLocaleString()}</TdRight>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
 }
