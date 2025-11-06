@@ -1,3 +1,4 @@
+// src/components/reports/RoomsStatusTable.jsx
 import React, { useMemo, useState } from "react";
 import {
   Search,
@@ -9,7 +10,19 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-/* ========================= Helpers (ไม่ถูกแก้ไข Logic) ========================= */
+/* ========================= Normalizers & Helpers ========================= */
+// บังคับให้เป็นอาร์เรย์: รองรับกรณี API คืน {data: [...]}, null, หรือ error object
+function asArray(input) {
+  if (Array.isArray(input)) return input;
+  if (input && Array.isArray(input.data)) return input.data;
+  if (input && Array.isArray(input.rows)) return input.rows;
+  if (input && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  // แจ้งเตือนเพื่อ debug แต่ยังให้หน้าไม่ล้ม
+  console.warn("[RoomsStatusTable] non-array data received:", input);
+  return [];
+}
+
 const getRoomId = (r = {}) =>
   String(r.room_id ?? r.roomId ?? r.room_code ?? r.roomCode ?? "").trim();
 const getRoomNo = (r = {}) =>
@@ -21,7 +34,7 @@ const guessRoomAny = (r = {}) => {
     r.roomname, r.room_label, r.label
   ];
   for (const v of direct) if (v != null && v !== "") return String(v).trim();
-  for (const [k, v] of Object.entries(r)) {
+  for (const [k, v] of Object.entries(r || {})) {
     if (!/(room|ห้อง)/i.test(k) || v == null) continue;
     if (typeof v === "string" || typeof v === "number") return String(v).trim();
     if (typeof v === "object") {
@@ -37,7 +50,7 @@ const roomLabel = (r = {}) => {
   const no = getRoomNo(r);
   if (id && no) return `${id} (${no})`;
   const any = guessRoomAny(r);
-  return (id || no || any || "-");
+  return id || no || any || "-";
 };
 
 const normalizeStatusKey = (s) => {
@@ -46,7 +59,7 @@ const normalizeStatusKey = (s) => {
   return k;
 };
 
-// ปรับโทนสี: occupied เปลี่ยนจาก slate เป็น indigo
+// โทนสี badge สถานะ
 const statusTheme = {
   vacant:   { text: "ว่าง",     ring: "border-emerald-300", bg: "bg-emerald-50",  dot: "bg-emerald-500",  textColor: "text-emerald-900" },
   occupied: { text: "พักอยู่",   ring: "border-indigo-300",  bg: "bg-indigo-50",   dot: "bg-indigo-600",   textColor: "text-indigo-900" },
@@ -55,13 +68,17 @@ const statusTheme = {
 const StatusBadge = ({ status }) => {
   const key = normalizeStatusKey(status);
   const th = statusTheme[key];
-  if (!th) return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-800 bg-slate-50">
-      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" /> {status || "-"}
-    </span>
-  );
+  if (!th) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-800 bg-slate-50">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" /> {status || "-"}
+      </span>
+    );
+  }
   return (
-    <span className={`inline-flex items-center gap-2 rounded-full border ${th.ring} ${th.bg} ${th.textColor} px-3 py-1 text-xs font-medium`}>
+    <span
+      className={`inline-flex items-center gap-2 rounded-full border ${th.ring} ${th.bg} ${th.textColor} px-3 py-1 text-xs font-medium`}
+    >
       <span className={`h-1.5 w-1.5 rounded-full ${th.dot}`} />
       {th.text}
     </span>
@@ -70,18 +87,19 @@ const StatusBadge = ({ status }) => {
 
 const roomComparator = (a, b) =>
   roomLabel(a).localeCompare(roomLabel(b), undefined, { numeric: true, sensitivity: "base" });
-// ... (สิ้นสุดโค้ด Helpers) ...
 
 /* ========================= Component ========================= */
-export default function RoomsStatusReport({ data = [] }) {
+export default function RoomsStatusTable({ data = [] }) {
+  // 🔒 บังคับ normalize ตั้งแต่ต้น ป้องกัน "is not iterable"
+  const safeData = asArray(data);
+
   const [q, setQ] = useState("");
   const [statusTab, setStatusTab] = useState("all"); // all | vacant | occupied | pending
   const [sortBy, setSortBy] = useState("room"); // room | tenant
 
-  // Logic Filtering/Sorting (ไม่ถูกแก้ไข)
+  // Filter/Sort
   const filtered = useMemo(() => {
-    // sort
-    const base = [...data].sort((a, b) => {
+    const base = [...safeData].sort((a, b) => {
       if (sortBy === "tenant") {
         const A = String(a.tenant_name ?? a.tenant ?? "").toLowerCase();
         const B = String(b.tenant_name ?? b.tenant ?? "").toLowerCase();
@@ -90,13 +108,11 @@ export default function RoomsStatusReport({ data = [] }) {
       return roomComparator(a, b);
     });
 
-    // tab
     const listByTab = base.filter((r) => {
       if (statusTab === "all") return true;
       return normalizeStatusKey(r.status ?? r.room_status) === statusTab;
     });
 
-    // search
     const term = q.trim().toLowerCase();
     if (!term) return listByTab;
 
@@ -108,29 +124,27 @@ export default function RoomsStatusReport({ data = [] }) {
       const isThai = (term === "ว่าง" && sKey === "vacant") || (term === "พักอยู่" && sKey === "occupied") || (term === "รอเข้าพัก" && sKey === "pending");
       return room.includes(term) || tenant.includes(term) || sTh.includes(term) || isThai;
     });
-  }, [data, statusTab, q, sortBy]);
+  }, [safeData, statusTab, q, sortBy]);
 
-  // Logic KPI Calculation (ไม่ถูกแก้ไข)
+  // KPIs
   const kpi = useMemo(() => {
-    const total    = data.length;
-    const vacant   = data.filter(r => normalizeStatusKey(r.status || r.room_status) === "vacant").length;
-    const occupied = data.filter(r => normalizeStatusKey(r.status || r.room_status) === "occupied").length;
-    const pending  = data.filter(r => normalizeStatusKey(r.status || r.room_status) === "pending").length;
+    const total    = safeData.length;
+    const vacant   = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "vacant").length;
+    const occupied = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "occupied").length;
+    const pending  = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "pending").length;
     return { total, vacant, occupied, pending };
-  }, [data]);
+  }, [safeData]);
 
   return (
     <div className="space-y-6">
-      {/* Header – ตกแต่งให้เด่นขึ้น */}
+      {/* Header */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
         <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
           <div className="flex items-center gap-3">
-            {/* ไอคอน Header */}
             <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
               <ClipboardList className="w-6 h-6 text-indigo-700" />
             </div>
             <div>
-              {/* ปรับขนาดฟอนต์ */}
               <h2 className="text-2xl font-bold text-slate-900">รายงานห้องพัก</h2>
               <p className="text-slate-600 text-sm mt-0.5">
                 สรุปสถานะห้องแบบเรียลไทม์ • ค้นหา • เรียง • กรองสถานะ
@@ -140,7 +154,7 @@ export default function RoomsStatusReport({ data = [] }) {
         </div>
       </div>
 
-      {/* KPI row – ตกแต่งด้วยดีไซน์ใหม่และโทนสีเฉพาะสถานะ */}
+      {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPI title="ห้องทั้งหมด" value={kpi.total} icon={<Home />} tone="slate" />
         <KPI title="ว่าง" value={kpi.vacant} icon={<CircleCheckBig />} tone="emerald" />
@@ -148,7 +162,7 @@ export default function RoomsStatusReport({ data = [] }) {
         <KPI title="รอเข้าพัก" value={kpi.pending} icon={<Clock />} tone="amber" />
       </div>
 
-      {/* Controls – ตกแต่งช่องค้นหาและปุ่ม Pill */}
+      {/* Controls */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           {/* Search */}
@@ -181,24 +195,23 @@ export default function RoomsStatusReport({ data = [] }) {
           </div>
         </div>
 
-        {/* Status pills – แสดงจำนวนห้องและใช้โทนสี */}
+        {/* Status pills */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Pill active={statusTab === "all"} onClick={() => setStatusTab("all")} label="ทั้งหมด" tone="slate" />
           <Pill active={statusTab === "vacant"} onClick={() => setStatusTab("vacant")} label={`ว่าง (${kpi.vacant})`} tone="emerald" />
           <Pill active={statusTab === "occupied"} onClick={() => setStatusTab("occupied")} label={`พักอยู่ (${kpi.occupied})`} tone="indigo" />
           <Pill active={statusTab === "pending"} onClick={() => setStatusTab("pending")} label={`รอเข้าพัก (${kpi.pending})`} tone="amber" />
           <span className="ml-auto text-sm font-medium text-slate-600">
-            แสดงผล {filtered.length} จาก {data.length} ห้อง
+            แสดงผล {filtered.length} จาก {safeData.length} ห้อง
           </span>
         </div>
       </div>
 
-      {/* Table – ตกแต่ง Header และ Rows */}
+      {/* Table */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              {/* Header ตาราง: ใช้สี Indigo เข้ม */}
               <tr className="sticky top-0 z-10 bg-indigo-900 text-white shadow-md">
                 <Th className="text-left">ห้อง</Th>
                 <Th className="text-left">สถานะ</Th>
@@ -208,8 +221,7 @@ export default function RoomsStatusReport({ data = [] }) {
             <tbody className="divide-y divide-slate-100">
               {filtered.length ? (
                 filtered.map((r, i) => (
-                  // Rows: ปรับขนาดฟอนต์/Padding และเพิ่ม hover สีอ่อน
-                  <tr key={i} className="hover:bg-indigo-50/30 transition-colors text-[16px]">
+                  <tr key={`${roomLabel(r)}-${i}`} className="hover:bg-indigo-50/30 transition-colors text-[16px]">
                     <td className="px-6 py-4 font-bold text-slate-900">{roomLabel(r)}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status || r.room_status} /></td>
                     <td className="px-6 py-4 text-slate-800">{r.tenant_name || r.tenant || "-"}</td>
@@ -230,9 +242,7 @@ export default function RoomsStatusReport({ data = [] }) {
   );
 }
 
-/* ========================= tiny pieces (Components ย่อย - ตกแต่งอย่างเดียว) ========================= */
-
-// KPI Card (ปรับปรุง)
+/* ========================= Tiny UI pieces ========================= */
 function KPI({ title, value, icon, tone = "slate" }) {
   const toneMap = {
     slate:   { text: "text-slate-700",   border: "border-slate-400",   bg: "bg-slate-50" },
@@ -243,9 +253,8 @@ function KPI({ title, value, icon, tone = "slate" }) {
   const th = toneMap[tone];
 
   return (
-    <div className={`rounded-xl border border-slate-200 bg-white p-4 relative overflow-hidden transition-all duration-300 hover:shadow-lg`}>
-      {/* แถบสีด้านซ้าย */}
-      <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.border.replace('border', 'bg')}`} />
+    <div className="rounded-xl border border-slate-200 bg-white p-4 relative overflow-hidden transition-all duration-300 hover:shadow-lg">
+      <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.border.replace("border", "bg")}`} />
       <div className="pl-2 flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-slate-500 tracking-wide">{title}</p>
@@ -259,7 +268,6 @@ function KPI({ title, value, icon, tone = "slate" }) {
   );
 }
 
-// Pill (ปุ่มกรองสถานะ - ปรับปรุง)
 function Pill({ label, active, tone = "slate", onClick }) {
   const toneMap = {
     slate:   "border-slate-300 text-slate-800 data-[active=true]:bg-slate-700 data-[active=true]:text-white data-[active=true]:border-slate-700",
@@ -279,7 +287,5 @@ function Pill({ label, active, tone = "slate", onClick }) {
 }
 
 function Th({ children, className = "" }) {
-  return (
-    <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>
-  );
+  return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>;
 }
