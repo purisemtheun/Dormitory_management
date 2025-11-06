@@ -1,196 +1,398 @@
-// frontend/src/sections/reports/PaymentsPanel.jsx
-import React, { useEffect, useState } from "react";
-import reportApi from "../../api/reports.api";
-import { CalendarDays, Filter, RefreshCw, Receipt, BadgeCheck } from "lucide-react";
+// frontend/src/pages/tenant/PaymentPage.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import http from "../../services/http";
+import { paymentApi } from "../../services/payment.api";
+import {
+  Wallet,
+  FileUp,
+  ReceiptText,
+  Hash,
+  QrCode,
+  Droplet,
+  Zap,
+  Home,
+} from "lucide-react";
 
-const todayStr = () => new Date().toISOString().slice(0,10);
-const monthAgo = () => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); };
+/**
+ * PaymentPage (UX/UI เข้าธีมรายงาน)
+ * - ตารางบิล 3 งวดล่าสุด (เฉพาะยังค้าง/รออนุมัติ) จัดชิดซ้าย + tabular-nums ให้ตัวเลขเรียงสวย
+ * - แยกคอลัมน์: ค่าเช่า / ค่าน้ำ / ค่าไฟ / รวม และแสดงสถานะเป็น badge
+ * - เลือกบิลที่จะอัปโหลดสลิปได้ (default = บิลค้างล่าสุด)
+ * - QR โหลดจาก API /api/payments/qr (fallback -> /public/img/Qrcode.jpg)
+ */
 
-export default function PaymentsPanel() {
-  const [from, setFrom] = useState(monthAgo());
-  const [to, setTo] = useState(todayStr());
-  const [status, setStatus] = useState("ทั้งหมด"); // ใช้ label ไทยใน UI แต่ค่าที่ส่งยังคง 'approved'/'pending'/'rejected'
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
+export default function PaymentPage() {
+  const [invoices, setInvoices] = useState([]);
+  const [loadingInv, setLoadingInv] = useState(true);
+  const [err, setErr] = useState("");
 
-  const load = async () => {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState("");
+  const [serverSlipUrl, setServerSlipUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [selectedInvoiceNo, setSelectedInvoiceNo] = useState("");
+
+  // QR จาก API; ถ้า error ใช้ไฟล์ public/img/Qrcode.jpg
+  const DEFAULT_QR = "/img/Qrcode.jpg";
+  const [qrUrl, setQrUrl] = useState("");
+  const [qrLoading, setQrLoading] = useState(true);
+
+  const normalizeResponse = (resp) => (resp?.data !== undefined ? resp.data : resp);
+  const isDebt = (s) => String(s || "").toLowerCase() !== "paid"; // ไม่ใช่ paid = ค้าง/รอ
+  const isImage = (url = "") => /\.(png|jpe?g|webp|gif)$/i.test(url);
+
+  async function loadQR() {
     try {
-      setLoading(true);
-      const resp = await reportApi.payments(from, to);
-      const data = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
-      setRows(data);
-    } catch (e) {
-      console.error("payments error", e);
-      setRows([]);
+      setQrLoading(true);
+      const r = await http.get("/api/payments/qr");
+      const data = normalizeResponse(r);
+      const url = data?.qr_url || data?.qrPath || "";
+      setQrUrl(url || DEFAULT_QR);
+    } catch {
+      setQrUrl(DEFAULT_QR);
     } finally {
-      setLoading(false);
+      setQrLoading(false);
+    }
+  }
+
+  async function loadInvoices() {
+    try {
+      setLoadingInv(true);
+      // แสดง 5 รายการล่าสุดไว้ก่อน เผื่อผู้ใช้ต้องเลือกบิลย้อนหลัง
+      const resp = await http.get("/api/payments/my-invoices?limit=5");
+      const payload = normalizeResponse(resp);
+      const list = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+      setInvoices(list);
+
+      // เลือกบิลค้างล่าสุดให้เอง (ถ้ายังไม่ได้เลือก)
+      const firstNo =
+        list.find((r) => isDebt(r.effective_status ?? r.status) && r.invoice_no?.length)?.invoice_no || "";
+      setSelectedInvoiceNo((prev) => prev || firstNo);
+    } catch (e) {
+      const msg =
+        e?.response?.data?.error || e?.response?.data?.message || e?.message || "โหลดใบแจ้งหนี้ไม่สำเร็จ";
+      setErr(msg);
+      setInvoices([]);
+    } finally {
+      setLoadingInv(false);
+    }
+  }
+
+  useEffect(() => {
+    loadInvoices();
+    loadQR();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // เฉพาะบิลที่ยังค้าง/รอ อิง period_ym ใหม่สุด -> เก่าสุด แล้วตัด 3 รายการบนสุด
+  const latest3 = useMemo(() => {
+    const list = invoices.filter((r) => isDebt(r.effective_status ?? r.status));
+    list.sort((a, b) => {
+      const aa = a.period_ym || (a.due_date ? String(a.due_date).slice(0, 10) : "");
+      const bb = b.period_ym || (b.due_date ? String(b.due_date).slice(0, 10) : "");
+      return aa < bb ? 1 : aa > bb ? -1 : 0;
+    });
+    return list.slice(0, 3);
+  }, [invoices]);
+
+  // ยอดค้างรวมของ 3 บิลล่าสุด
+  const totalDebt = useMemo(
+    () => latest3.reduce((sum, r) => sum + Number(r.amount || 0), 0),
+    [latest3]
+  );
+
+  // บิลที่ถูกเลือกจริงสำหรับส่งสลิป
+  const targetInvoice = useMemo(() => {
+    if (selectedInvoiceNo) {
+      return invoices.find((r) => r.invoice_no === selectedInvoiceNo) || latest3[0] || null;
+    }
+    if (latest3.length) return latest3[0];
+    if (!invoices.length) return null;
+    return invoices[0];
+  }, [selectedInvoiceNo, latest3, invoices]);
+
+  const statusBadge = (inv) => {
+    const raw = String(inv?.status || "").toLowerCase();
+    if (raw === "paid")
+      return { label: "ชำระเสร็จสิ้น", color: "text-emerald-700 bg-emerald-50 ring-emerald-200" };
+    if (inv?.slip_url && raw !== "paid")
+      return { label: "รออนุมัติชำระเงิน", color: "text-amber-700 bg-amber-50 ring-amber-200" };
+    return { label: "ค้างชำระ", color: "text-rose-700 bg-rose-50 ring-rose-200" };
+  };
+
+  const onFileChange = (e) => {
+    const f = e.target.files?.[0] || null;
+    setErr("");
+    setFile(null);
+    setPreview("");
+    setServerSlipUrl("");
+    if (!f) return;
+
+    const ALLOW = ["image/jpeg", "image/png", "application/pdf"];
+    const MAX = 5 * 1024 * 1024;
+    if (!ALLOW.includes(f.type)) return setErr("รองรับเฉพาะ .jpg .png .pdf เท่านั้น");
+    if (f.size > MAX) return setErr("ไฟล์ใหญ่เกิน 5MB");
+
+    setFile(f);
+    if (f.type.startsWith("image/")) setPreview(URL.createObjectURL(f));
+  };
+
+  useEffect(() => {
+    return () => preview && URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    if (!targetInvoice) return setErr("ไม่พบบิลสำหรับชำระ");
+    if (!file) return setErr("กรุณาแนบสลิปก่อนกดส่ง");
+
+    try {
+      setUploading(true);
+      const payload = selectedInvoiceNo?.length
+        ? { invoice_no: selectedInvoiceNo, slip: file }
+        : { invoice_id: targetInvoice.invoice_id, slip: file };
+
+      // paymentApi.submit ควรใช้ FormData ภายใน service นี้อยู่แล้ว
+      const res = await paymentApi.submit(payload);
+      const data = res?.data ?? res;
+      const slipUrl = data?.slip_url ?? data?.data?.slip_url ?? data;
+      if (typeof slipUrl === "string") setServerSlipUrl(slipUrl);
+
+      // รีโหลดรายการ เพื่อให้สถานะเปลี่ยนเป็น "รออนุมัติ" ทันที
+      await loadInvoices();
+
+      // ถ้าบิลที่เลือกถูกส่งสลิปแล้ว ลองเลื่อนเลือกไปบิลค้างถัดไป
+      const nextDebt =
+        invoices
+          .filter((r) => r.invoice_no !== (selectedInvoiceNo || targetInvoice?.invoice_no))
+          .find((r) => isDebt(r.status))?.invoice_no || "";
+      setSelectedInvoiceNo(nextDebt);
+      setFile(null);
+      setPreview("");
+    } catch (e2) {
+      const api = e2?.response?.data || {};
+      setErr(api?.error || api?.message || e2?.message || "อัปโหลดไม่สำเร็จ");
+    } finally {
+      setUploading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
-
-  const filtered = rows.filter(r => {
-    if (status === "ทั้งหมด") return true;
-    return String(r.payment_status || "").toLowerCase() === status; // status จะเป็น approved/pending/rejected
-  });
-
-  const total = filtered.reduce((s,r)=> s + Number(r.amount||0), 0);
-
   return (
-    <div className="space-y-6">
-      <Header title="การชำระเงิน" subtitle="สรุปยอดที่ชำระภายในช่วงวันที่ • กรองสถานะ" onReload={load} loading={loading} />
+    <div className="min-h-[calc(100vh-80px)] bg-gradient-to-b from-white to-slate-50">
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10">
 
-      <div className="bg-white rounded-xl border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-        <div>
-          <label className="block text-sm text-slate-600 mb-1">วันที่เริ่มต้น</label>
-          <div className="relative">
-            <CalendarDays className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input type="date" className="border rounded-lg pl-9 pr-3 py-2 w-full" value={from} onChange={e=>setFrom(e.target.value)} />
+        {/* Hero */}
+        <div className="rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-7 shadow-lg mb-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-white/15 rounded-xl p-2.5">
+              <Wallet className="w-7 h-7" />
+            </div>
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">ชำระเงินค่าเช่า</h1>
+              <p className="text-white/80 text-sm sm:text-base mt-1">
+                ดูใบแจ้งหนี้งวดล่าสุดและอัปโหลดหลักฐานการโอน
+              </p>
+            </div>
+            <div className="ml-auto text-right">
+              <div className="text-xs sm:text-sm text-white/80">ยอดค้างรวม (3 งวดล่าสุด)</div>
+              <div className="text-3xl sm:text-4xl font-black tabular-nums">
+                {totalDebt.toLocaleString()} <span className="text-white/90 text-xl font-semibold">บาท</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div>
-          <label className="block text-sm text-slate-600 mb-1">ถึง</label>
-          <div className="relative">
-            <CalendarDays className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input type="date" className="border rounded-lg pl-9 pr-3 py-2 w-full" value={to} onChange={e=>setTo(e.target.value)} />
+
+        {/* ตารางใบแจ้งหนี้ */}
+        <section className="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 sm:p-8 mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <ReceiptText className="w-6 h-6 text-purple-600" />
+            <h2 className="text-2xl font-semibold text-slate-800">ใบแจ้งหนี้ 3 งวดล่าสุด</h2>
           </div>
-        </div>
-        <div>
-          <label className="block text-sm text-slate-600 mb-1">สถานะ</label>
-          <div className="relative">
-            <Filter className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            {/* แสดง label ไทย แต่ค่า value เป็นอังกฤษเพื่อแมตช์กับ API */}
-            <select
-              className="border rounded-lg pl-9 pr-3 py-2 w-full"
-              value={status}
-              onChange={e=>setStatus(e.target.value)}
-            >
-              <option value="ทั้งหมด">ทั้งหมด</option>
-              <option value="approved">ชำระเงินสำเร็จแล้ว</option>
-              <option value="pending">รอดำเนินการ</option>
-              <option value="rejected">ปฏิเสธ</option>
-            </select>
-          </div>
-        </div>
-        <div className="flex items-end">
-          <button className="px-4 py-2 rounded-lg bg-indigo-600 text-white inline-flex items-center gap-2" onClick={load}>
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            โหลด
-          </button>
-        </div>
-        <div className="flex items-end justify-end">
-          <div>
-            <p className="text-slate-600 text-sm">ยอดรวมช่วงนี้</p>
-            <p className="text-2xl font-extrabold inline-flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-indigo-600" />
-              ฿ {total.toLocaleString()}
+
+          {loadingInv && <p className="text-lg text-slate-500">กำลังโหลด…</p>}
+          {!loadingInv && latest3.length === 0 && (
+            <p className="text-lg text-slate-500">ไม่มีรายการค้างชำระ 🎉</p>
+          )}
+
+          {!loadingInv && latest3.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-base border-separate [border-spacing:0]">
+                <thead>
+                  <tr className="text-slate-600">
+                    <th className="py-3 px-3 text-left">เลขบิล</th>
+                    <th className="py-3 px-3 text-left">ห้อง</th>
+                    <th className="py-3 px-3 text-left">งวด</th>
+                    <th className="py-3 px-3 text-left">ค่าเช่า</th>
+                    <th className="py-3 px-3 text-left">ค่าน้ำ</th>
+                    <th className="py-3 px-3 text-left">ค่าไฟ</th>
+                    <th className="py-3 px-3 text-left">ยอดรวม</th>
+                    <th className="py-3 px-3 text-left">ครบกำหนด</th>
+                    <th className="py-3 px-3 text-left">สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {latest3.map((r, idx) => {
+                    const st = statusBadge(r);
+                    return (
+                      <tr
+                        key={r.invoice_id}
+                        className={`hover:bg-purple-50/30 transition ${
+                          idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
+                        }`}
+                      >
+                        <td className="py-3 px-3 font-semibold text-slate-800">{r.invoice_no}</td>
+                        <td className="py-3 px-3">
+                          <span className="inline-flex items-center gap-1 text-slate-700">
+                            <Home className="w-4 h-4 text-slate-400" />
+                            {r.room_number || r.room_no || "-"}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-mono tabular-nums text-slate-700">{r.period_ym}</td>
+                        <td className="py-3 px-3 font-mono tabular-nums">
+                          {Number(r.rent_amount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 font-mono tabular-nums">
+                          {Number(r.water_amount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 font-mono tabular-nums">
+                          {Number(r.electric_amount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 font-bold text-slate-900 font-mono tabular-nums">
+                          {Number(r.amount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3 font-mono tabular-nums">
+                          {r.due_date ? String(r.due_date).slice(0, 10) : "-"}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className={`text-sm px-3 py-1.5 rounded-full ring-1 ${st.color} font-semibold`}>
+                            {st.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* สแกนจ่าย + อัปโหลด */}
+        <section className="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 sm:p-8">
+          {/* QR */}
+          <div className="mb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <QrCode className="w-6 h-6 text-purple-600" />
+              <h3 className="text-xl font-semibold text-slate-800">สแกนจ่าย (พร้อมเพย์/บัญชี)</h3>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 flex items-center justify-center">
+              {!qrLoading ? (
+                <img
+                  src={qrUrl || DEFAULT_QR}
+                  onError={(e) => { e.currentTarget.src = DEFAULT_QR; }}
+                  alt="QR สำหรับชำระเงิน"
+                  className="w-full max-w-sm sm:max-w-md max-h-96 object-contain rounded-lg shadow-lg"
+                />
+              ) : (
+                <div className="text-base text-slate-500">กำลังโหลด QR…</div>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-slate-500">
+              ระบบจะพยายามใช้ QR ล่าสุดจากฐานข้อมูล; ถ้าไม่มีจะแสดงไฟล์จาก <code>/public/img/Qrcode.jpg</code>
             </p>
           </div>
-        </div>
-      </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-indigo-700">
-              <Th>วันที่ชำระ</Th>
-              <Th>ห้อง</Th>
-              <Th>เลขบิล</Th>
-              <Th>ผู้จ่าย</Th>
-              <Th>ยอด (฿)</Th>
-              <Th>สถานะ</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {loading ? (
-              <SkeletonRows cols={6} rows={8} />
-            ) : filtered.length ? filtered.map((r,i)=>(
-              <tr key={`${r.invoice_no}-${i}`}>
-                <Td>{(r.paid_at || "").toString().slice(0,10)}</Td>
-                <Td>{r.room_number || "-"}</Td>
-                <Td>{r.invoice_no || "-"}</Td>
-                <Td>{r.tenant_name || "-"}</Td>
-                <Td className="font-semibold">฿ {(Number(r.amount||0)).toLocaleString()}</Td>
-                <Td>{statusBadge(r.payment_status)}</Td>
-              </tr>
-            )) : <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">ไม่พบรายการชำระเงิน</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function Header({title, subtitle, onReload, loading}) {
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 p-5">
-      <div className="flex items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-200 inline-flex items-center justify-center">
-            <BadgeCheck className="w-6 h-6 text-indigo-600" />
-          </span>
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">{title}</h2>
-            <p className="text-slate-500 text-sm">{subtitle}</p>
+          {/* Upload form */}
+          <div className="flex items-center gap-3 mb-4 pt-4 border-t border-slate-200">
+            <FileUp className="w-6 h-6 text-purple-600" />
+            <h2 className="text-2xl font-semibold text-slate-800">อัปโหลดหลักฐานการโอน</h2>
           </div>
-        </div>
-        <button
-          onClick={onReload}
-          disabled={loading}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          โหลดใหม่
-        </button>
+
+          <div className="mb-4">
+            <label className="block text-base font-medium text-slate-700 mb-1">เลือกใบแจ้งหนี้</label>
+            <select
+              className="w-full h-12 rounded-xl border border-slate-300 px-4 text-base focus:border-purple-500 focus:ring-4 focus:ring-purple-100 outline-none bg-white transition"
+              value={selectedInvoiceNo}
+              onChange={(e) => setSelectedInvoiceNo(e.target.value)}
+            >
+              <option value="">— เลือกอัตโนมัติ (งวดล่าสุด) —</option>
+              {latest3.map((r) => (
+                <option key={r.invoice_id} value={r.invoice_no || ""}>
+                  {r.invoice_no} • {r.period_ym} • {Number(r.amount || 0).toLocaleString()} บาท
+                </option>
+              ))}
+            </select>
+
+            {targetInvoice && (
+              <div className="mt-3 text-base text-slate-700">
+                <Hash className="inline w-5 h-5 text-slate-400 mr-1" />
+                บิลที่เลือก: {targetInvoice.invoice_no} · งวด {targetInvoice.period_ym} ·{" "}
+                <strong className="text-purple-700">
+                  {Number(targetInvoice.amount || 0).toLocaleString()} บาท
+                </strong>
+              </div>
+            )}
+          </div>
+
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+              <label className="block text-base font-medium text-slate-700 mb-1">
+                แนบสลิปโอน (.jpg/.png/.pdf) ≤ 5MB
+              </label>
+              <input
+                type="file"
+                accept=".jpg,.jpeg,.png,.pdf"
+                onChange={onFileChange}
+                className="block w-full text-base file:mr-4 file:py-2.5 file:px-5 file:rounded-lg file:border-0 file:bg-purple-600 file:text-white hover:file:bg-purple-700
+                           border border-slate-300 rounded-xl h-12 px-3 bg-white cursor-pointer"
+              />
+            </div>
+
+            {preview && (
+              <img
+                src={preview}
+                alt="พรีวิวสลิป"
+                className="block w-full max-h-96 object-contain rounded-lg border border-slate-300"
+              />
+            )}
+
+            {serverSlipUrl && (
+              <div className="text-base text-slate-600">
+                ✅ อัปโหลดแล้ว:{" "}
+                {isImage(serverSlipUrl) ? (
+                  <a
+                    href={encodeURI(serverSlipUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-purple-700 font-medium hover:underline"
+                  >
+                    ดูสลิป
+                  </a>
+                ) : (
+                  <a
+                    href={encodeURI(serverSlipUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-purple-700 font-medium hover:underline"
+                  >
+                    เปิดไฟล์
+                  </a>
+                )}
+              </div>
+            )}
+
+            {err && <p className="text-base text-rose-600 font-medium">{err}</p>}
+
+            <button
+              className="w-full h-12 rounded-xl bg-purple-600 text-white text-lg font-bold shadow-lg shadow-purple-200 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!file || !targetInvoice || uploading}
+            >
+              {uploading ? "กำลังอัปโหลด..." : "ส่งหลักฐาน"}
+            </button>
+          </form>
+        </section>
       </div>
     </div>
-  );
-}
-function Th({children}){ return <th className="px-6 py-3 text-left text-sm font-semibold text-white">{children}</th>; }
-function Td({children}){ return <td className="px-6 py-3">{children}</td>; }
-
-function statusBadge(sraw) {
-  const s = String(sraw || "-").toLowerCase();
-  if (s === "approved") {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs bg-emerald-50 text-emerald-700 border-emerald-300">
-        ชำระเงินสำเร็จแล้ว
-      </span>
-    );
-  }
-  if (s === "pending") {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs bg-amber-50 text-amber-700 border-amber-300">
-        รอดำเนินการ
-      </span>
-    );
-  }
-  if (s === "rejected") {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs bg-rose-50 text-rose-700 border-rose-300">
-        ปฏิเสธ
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs bg-slate-50 text-slate-600 border-slate-300">
-      -
-    </span>
-  );
-}
-
-function SkeletonRows({cols=5, rows=6}) {
-  return (
-    <>
-      {Array.from({length: rows}).map((_,ri)=>(
-        <tr key={ri}>
-          {Array.from({length: cols}).map((__,ci)=>(
-            <td key={ci} className="px-6 py-3">
-              <div className="h-4 w-28 bg-slate-200 rounded animate-pulse" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
   );
 }
