@@ -1,6 +1,8 @@
+// src/components/reports/RevenueDailyChart.jsx
 import React, { useMemo } from "react";
 import { CalendarRange, BarChart3, Receipt, ChevronDown } from "lucide-react";
 
+/* ---------- normalizer: รองรับ array ได้หลายรูปแบบ ---------- */
 const arr = (d) =>
   Array.isArray(d) ? d :
   Array.isArray(d?.rows) ? d.rows :
@@ -8,22 +10,27 @@ const arr = (d) =>
   Array.isArray(d?.items) ? d.items :
   Array.isArray(d?.result) ? d.result : [];
 
+/* ---------- helpers ---------- */
 function normalizeDate(v) {
   if (!v) return "";
   const s = String(v);
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s.slice(0, 10);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
 }
 const num = (v) => Number(v || 0) || 0;
-const thb = (n) => num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const thb = (n) =>
+  num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/* ---------- small UI parts ---------- */
 function KPICard({ title, value, icon, tone = "slate" }) {
   const map = {
-    slate:   { text: "text-slate-700", ring: "border-slate-400",  bg: "bg-slate-50" },
-    indigo:  { text: "text-indigo-700",ring: "border-indigo-400", bg: "bg-indigo-50" },
-    sky:     { text: "text-sky-700",   ring: "border-sky-400",    bg: "bg-sky-50" },
+    slate:   { text: "text-slate-700",   ring: "border-slate-400",   bg: "bg-slate-50" },
+    indigo:  { text: "text-indigo-700",  ring: "border-indigo-400",  bg: "bg-indigo-50" },
+    sky:     { text: "text-sky-700",     ring: "border-sky-400",     bg: "bg-sky-50" },
     emerald: { text: "text-emerald-700", ring: "border-emerald-400", bg: "bg-emerald-50" },
     amber:   { text: "text-amber-700",   ring: "border-amber-400",   bg: "bg-amber-50" },
     violet:  { text: "text-violet-700",  ring: "border-violet-400",  bg: "bg-violet-50" },
@@ -44,15 +51,27 @@ function KPICard({ title, value, icon, tone = "slate" }) {
     </div>
   );
 }
-function Th({ children, className = "" }) { return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>; }
-function TdRight({ children, className = "" }) { return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>; }
+function Th({ children, className = "" }) {
+  return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>;
+}
+function TdRight({ children, className = "" }) {
+  return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>;
+}
 
-export default function RevenueDailyChart({ data = [], range = { from: "", to: "" }, setRange, onDateClick }) {
+/* ---------- main component ---------- */
+export default function RevenueDailyChart({
+  data = [],
+  range = { from: "", to: "" },
+  setRange,
+  onDateClick,
+}) {
+  // map/normalize rows
   const rows = useMemo(() => {
     const items = arr(data);
     return items
       .map((r) => {
-        const dateRaw = r.period || r.date || r.report_date || r.paid_at || r.payment_date || "";
+        const dateRaw =
+          r.period || r.date || r.report_date || r.paid_at || r.payment_date || "";
         const amt = num(r.revenue ?? r.total ?? 0);
         const paid = num(r.paid ?? r.count ?? r.payments_count ?? 0);
         return { _date: normalizeDate(dateRaw), amount: amt, paid };
@@ -61,6 +80,7 @@ export default function RevenueDailyChart({ data = [], range = { from: "", to: "
       .sort((a, b) => a._date.localeCompare(b._date));
   }, [data]);
 
+  // KPIs
   const kpi = useMemo(() => {
     const total = rows.reduce((s, r) => s + r.amount, 0);
     const count = rows.length;
@@ -93,13 +113,15 @@ export default function RevenueDailyChart({ data = [], range = { from: "", to: "
               <span className="text-sm text-slate-700">ช่วงวันที่</span>
 
               <input
-                type="date" value={range.from || ""}
+                type="date"
+                value={range.from || ""}
                 onChange={(e) => setRange?.((p) => ({ ...p, from: e.target.value }))}
                 className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
               />
               <span className="text-slate-400">ถึง</span>
               <input
-                type="date" value={range.to || ""}
+                type="date"
+                value={range.to || ""}
                 onChange={(e) => setRange?.((p) => ({ ...p, to: e.target.value }))}
                 className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
               />
@@ -143,8 +165,12 @@ export default function RevenueDailyChart({ data = [], range = { from: "", to: "
                 </tr>
               ) : (
                 rows.map((r, i) => (
-                  <tr key={r._date || i} className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
-                      onClick={() => onDateClick?.(r._date)} title="คลิกเพื่อดูรายละเอียดวันนี้">
+                  <tr
+                    key={r._date || i}
+                    className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
+                    onClick={() => onDateClick?.(r._date)}
+                    title="คลิกเพื่อดูรายละเอียดวันนี้"
+                  >
                     <td className="px-6 py-4 font-semibold text-slate-900">{r._date}</td>
                     <TdRight className="font-bold text-slate-900">{thb(r.amount)}</TdRight>
                     <TdRight>{(r.paid || 0).toLocaleString()}</TdRight>

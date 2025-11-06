@@ -1,9 +1,13 @@
 // frontend/src/pages/admin/DashboardPage.jsx
 import { useEffect, useMemo, useState } from "react";
-import { dashboardApi } from "../../services/dashboard.api";
+import dashboardApi from "../../services/dashboard.api"; // ⬅️ แก้ให้เป็น default import
 import { UserRound } from "lucide-react";
 
 const MONTHS_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+// ช่วยแปลง res ให้เป็น object เดียว ไม่ว่าจะมาจาก data/result/rows
+const pickPayload = (res) =>
+  res?.data ?? res?.result ?? res?.rows ?? res ?? {};
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
@@ -14,8 +18,22 @@ export default function DashboardPage() {
     (async () => {
       try {
         setLoading(true);
-        const res = await dashboardApi.get();
-        setData(res?.data || null);
+
+        // รองรับหลายรูปแบบของ service: get() / dashboard() / getSummary() / ฟังก์ชันตรง ๆ
+        const fetcher =
+          dashboardApi?.get ||
+          dashboardApi?.dashboard ||
+          dashboardApi?.getSummary ||
+          (typeof dashboardApi === "function" ? dashboardApi : null);
+
+        if (!fetcher) {
+          throw new Error("dashboard.api ไม่มีเมธอด get()/dashboard()/getSummary()");
+        }
+
+        const res = await fetcher();
+        const payload = pickPayload(res);
+
+        setData(payload || null);
         setErr("");
       } catch (e) {
         setErr(e?.response?.data?.message || e.message || "โหลดข้อมูลไม่สำเร็จ");
@@ -53,23 +71,23 @@ export default function DashboardPage() {
 
       {!loading && data && (
         <>
-          {/* Stats — ลดช่องไฟ + พื้นหลังไล่เฉดอ่อน */}
+          {/* Stats */}
           <section className="stats">
-            <Stat title="ห้องทั้งหมด"           value={data.rooms_total}                     icon="🏠" tone="indigo" />
-            <Stat title="ผู้เช่าทั้งหมด"         value={data.tenants_total}                   icon="👥" tone="violet" />
-            <Stat title="บิลค้าง/รอดำเนินการ"    value={data.invoices_open}                   icon="🧾" tone="amber" />
-            <Stat title="ยอดค้างรวม (บาท)"       value={fmtMoney(data.outstanding_total)}     icon="💰" tone="emerald" />
-            <Stat title="คำขอชำระค้างตรวจ"       value={data.payments_pending}                icon="✅" tone="sky" />
-            <Stat title="รายได้เดือนนี้ (บาท)"    value={fmtMoney(data.revenue_this_month)}    icon="📈" tone="pink" />
-            <Stat title="บิลที่ออกเดือนนี้"       value={data.invoices_this_month?.count ?? 0} icon="📄" tone="purple" />
-            <Stat title="ยอดบิลเดือนนี้ (บาท)"    value={fmtMoney(data.invoices_this_month?.amount)} icon="💳" tone="yellow" />
+            <Stat title="ห้องทั้งหมด"           value={data.rooms_total ?? 0}                       icon="🏠" tone="indigo" />
+            <Stat title="ผู้เช่าทั้งหมด"         value={data.tenants_total ?? 0}                     icon="👥" tone="violet" />
+            <Stat title="บิลค้าง/รอดำเนินการ"    value={data.invoices_open ?? 0}                      icon="🧾" tone="amber" />
+            <Stat title="ยอดค้างรวม (บาท)"       value={fmtMoney(data.outstanding_total)}             icon="💰" tone="emerald" />
+            <Stat title="คำขอชำระค้างตรวจ"       value={data.payments_pending ?? 0}                   icon="✅" tone="sky" />
+            <Stat title="รายได้เดือนนี้ (บาท)"    value={fmtMoney(data.revenue_this_month)}            icon="📈" tone="pink" />
+            <Stat title="บิลที่ออกเดือนนี้"       value={data.invoices_this_month?.count ?? 0}        icon="📄" tone="purple" />
+            <Stat title="ยอดบิลเดือนนี้ (บาท)"    value={fmtMoney(data.invoices_this_month?.amount)}  icon="💳" tone="yellow" />
           </section>
 
-          {/* Charts — กรอบพื้นหลังมี tint อ่อน ลดความขาวโล่ง */}
+          {/* Charts */}
           <section className="grid-3">
             <ChartBlock title="รายได้ต่อเดือน (บาท)">
               <Bars
-                values={data.revenue_by_month}
+                values={data.revenue_by_month || Array(12).fill(0)}
                 max={maxRevenue}
                 labels={MONTHS_TH}
                 format={fmtMoney}
@@ -79,7 +97,7 @@ export default function DashboardPage() {
 
             <ChartBlock title="ยอดบิลที่ออกต่อเดือน (บาท)">
               <Bars
-                values={data.invoices_amount_by_month}
+                values={data.invoices_amount_by_month || Array(12).fill(0)}
                 max={maxInvAmount}
                 labels={MONTHS_TH}
                 format={fmtMoney}
@@ -89,7 +107,7 @@ export default function DashboardPage() {
 
             <ChartBlock title="จำนวนบิลต่อเดือน (ฉบับ)">
               <Bars
-                values={data.invoices_count_by_month}
+                values={data.invoices_count_by_month || Array(12).fill(0)}
                 max={maxInvCount}
                 labels={MONTHS_TH}
                 format={(v) => `${v}`}
@@ -98,7 +116,7 @@ export default function DashboardPage() {
             </ChartBlock>
           </section>
 
-          {/* Top 5 Debtors — อยู่ในกรอบเดียวกับกราฟ ลดช่องว่าง + ใส่ divider อ่อน */}
+          {/* Top 5 Debtors */}
           <section className="grid-1">
             <ChartBlock title="ลูกหนี้สูงสุด (Top 5)">
               <TopDebtors list={Array.isArray(data.top_debtors) ? data.top_debtors : []} fmtMoney={fmtMoney} />
@@ -148,12 +166,13 @@ function ChartBlock({ title, children }) {
 }
 
 function Bars({ values = [], max = 1, labels = [], format = (v) => v, barColor }) {
-  const total = values.reduce((s, n) => s + Number(n || 0), 0);
+  const safeVals = Array.isArray(values) ? values : [];
+  const total = safeVals.reduce((s, n) => s + Number(n || 0), 0);
   return (
     <>
       <div className="bars">
-        {values.map((v, i) => {
-          const h = Math.max(2, Math.round((Number(v || 0) / max) * 136)); // สูงสุด ~136px
+        {safeVals.map((v, i) => {
+          const h = Math.max(2, Math.round((Number(v || 0) / max) * 136));
           return (
             <div key={i} className="bar" title={`${labels[i] ?? ""}: ${format(v)}`}>
               <div className="bar__rect" style={{ height: h, background: barColor }} />
@@ -193,7 +212,7 @@ function TopDebtors({ list = [], fmtMoney }) {
   );
 }
 
-/* ============== Styles (คุมโทนไม่ฉูดฉาด, ลดพื้นที่ขาว) ============== */
+/* ============== Styles ============== */
 const styles = `
 :root{
   --bg: #f6f8fb;
@@ -203,9 +222,7 @@ const styles = `
   --title: #0f172a;
   --shadow: 0 8px 22px rgba(2,6,23,.06);
 }
-
 .dash{
-  /* พื้นหลังแบบ subtle gradient + pattern เบามากเพื่อลดความขาวล้วน */
   background:
     radial-gradient(1200px 600px at -10% -10%, #eef2ff 0%, transparent 35%),
     radial-gradient(900px 500px at 110% 0%, #ecfdf5 0%, transparent 40%),
@@ -214,73 +231,30 @@ const styles = `
   border-radius: 14px;
   padding: 8px;
 }
-
-.dash__head{
-  display:flex; align-items:center; gap:10px;
-  margin: 6px 0 10px;
-}
+.dash__head{ display:flex; align-items:center; gap:10px; margin: 6px 0 10px; }
 .dash__head h1{ margin:0; font-weight:900; font-size:1.45rem; color:var(--title); letter-spacing:.2px; }
-.pill{
-  background:#e3e8ff; color:#1f2937;
-  border:1px solid #c7d2fe; border-radius:999px;
-  padding:.2rem .6rem; font-size:.78rem; font-weight:700;
-}
-
-/* Alert */
+.pill{ background:#e3e8ff; color:#1f2937; border:1px solid #c7d2fe; border-radius:999px; padding:.2rem .6rem; font-size:.78rem; font-weight:700; }
 .alert{ display:flex; gap:10px; align-items:center; background:#fff1f2; border:1px solid #fecdd3; border-radius:12px; padding:10px 12px; margin-bottom:10px; box-shadow:var(--shadow); }
 .alert__bar{ width:6px; align-self:stretch; background:#ef4444; border-radius:6px; }
-
-/* Stats zone (compact กว่าเดิม) */
-.stats{
-  display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap:10px; margin-bottom:10px;
-}
-.stat{
-  display:flex; gap:12px; align-items:center;
-  background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px;
-  box-shadow: var(--shadow);
-}
-.stat__badge{
-  width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:white;
-}
+.stats{ display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:10px; }
+.stat{ display:flex; gap:12px; align-items:center; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px; box-shadow: var(--shadow); }
+.stat__badge{ width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:white; }
 .stat__icon{ font-size:22px; transform: translateY(-1px); }
 .stat__meta{ display:flex; flex-direction:column; }
 .stat__title{ font-size:.88rem; color:#4b5563; }
 .stat__value{ font-weight:900; font-size:1.28rem; color:#111827; }
-
-/* Panels */
-.panel{
-  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px;
-  box-shadow: var(--shadow);
-}
-.panel--tint{
-  /* พื้นหลังมี tint อ่อน ๆ เพื่อลดความขาวโล่ง */
-  background: linear-gradient(180deg, #ffffff, #fbfbfd);
-}
+.panel{ background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px; box-shadow: var(--shadow); }
+.panel--tint{ background: linear-gradient(180deg, #ffffff, #fbfbfd); }
 .panel__title{ font-weight:900; margin-bottom:6px; color:#111827; }
-
-/* Grids */
 .grid-3{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; margin-bottom:10px; }
 .grid-1{ display:grid; grid-template-columns: 1fr; }
-
-/* Bars */
-.bars{
-  display:flex; align-items:flex-end; gap:8px; height:160px;
-  margin-top:6px; padding:10px;
-  background:linear-gradient(180deg,#f8fafc, #f3f4f6); border-radius:10px; border:1px dashed #e2e8f0;
-}
+.bars{ display:flex; align-items:flex-end; gap:8px; height:160px; margin-top:6px; padding:10px; background:linear-gradient(180deg,#f8fafc, #f3f4f6); border-radius:10px; border:1px dashed #e2e8f0; }
 .bar{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; }
 .bar__rect{ width:100%; border-radius:8px; box-shadow: 0 4px 10px rgba(15,23,42,.12); transition:height .2s ease; }
 .bar__label{ margin-top:6px; font-size:.75rem; color:#64748b; }
 .bars__total{ margin-top:6px; font-size:.84rem; color:#475569; }
-
-/* Top debtors */
 .debtor{ list-style:none; padding:0; margin:4px 0 0; display:flex; flex-direction:column; gap:8px; }
-.debtor__item{
-  display:flex; align-items:center; justify-content:space-between; gap:12px;
-  background:linear-gradient(180deg,#ffffff,#fbfbfd);
-  border:1px solid var(--line); border-radius:12px; padding:10px 12px;
-}
+.debtor__item{ display:flex; align-items:center; justify-content:space-between; gap:12px; background:linear-gradient(180deg,#ffffff,#fbfbfd); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
 .debtor__left{ display:flex; align-items:center; gap:10px; min-width:0; }
 .debtor__avatar{ width:34px; height:34px; border-radius:999px; background:#e5e7eb; color:#334155; display:flex; align-items:center; justify-content:center; }
 .debtor__info{ display:flex; flex-direction:column; min-width:0; }
@@ -290,7 +264,5 @@ const styles = `
 .debtor__dot{ opacity:.6; }
 .debtor__due{ white-space:nowrap; }
 .debtor__amt{ font-weight:900; color:#0f172a; white-space:nowrap; }
-
-/* Empty */
 .empty{ text-align:center; color:#6b7280; padding:18px 0; }
 `;
