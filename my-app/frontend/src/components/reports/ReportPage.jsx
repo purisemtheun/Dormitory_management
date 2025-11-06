@@ -1,28 +1,8 @@
-// src/pages/reports/ReportsPage.jsx
+// frontend/src/pages/reports/ReportsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import RoomsStatusTable from "../../components/reports/RoomsStatusTable";
+import { reportApi } from "../../services/report.api"; // ← ใช้ service เดียว
 
-// ===== API base =====
-const BASE = process.env.REACT_APP_API || "http://localhost:3000/api";
-
-/* ========= Named API functions (ให้เพจอื่น import ใช้ได้) ========= */
-export async function getRoomsStatus() {
-  const r = await fetch(`${BASE}/reports/rooms-status`, { credentials: "include" });
-  if (!r.ok) throw new Error("Failed to fetch rooms status");
-  return r.json();
-}
-export async function getRevenueMonthly() {
-  const r = await fetch(`${BASE}/reports/revenue-monthly`, { credentials: "include" });
-  if (!r.ok) throw new Error("Failed to fetch revenue monthly");
-  return r.json();
-}
-export async function getDebts() {
-  const r = await fetch(`${BASE}/reports/debts`, { credentials: "include" });
-  if (!r.ok) throw new Error("Failed to fetch debts");
-  return r.json();
-}
-
-/* ========= Page Component ========= */
 export default function ReportsPage() {
   const [tab, setTab] = useState("rooms"); // 'rooms' | 'revenue' | 'debts'
   const [loading, setLoading] = useState(false);
@@ -32,7 +12,6 @@ export default function ReportsPage() {
   const [revenue, setRevenue] = useState([]);
   const [debts, setDebts] = useState([]);
 
-  // โหลดข้อมูลตามแท็บ
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -40,31 +19,29 @@ export default function ReportsPage() {
       setLoading(true);
       try {
         if (tab === "rooms") {
-          const res = await getRoomsStatus();
+          const res = await reportApi.roomsStatus();
           if (!alive) return;
           const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
           setRooms(data);
         } else if (tab === "revenue") {
-          const res = await getRevenueMonthly();
+          const res = await reportApi.revenueMonthly(6);
           if (!alive) return;
           const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
           setRevenue(data);
         } else if (tab === "debts") {
-          const res = await getDebts();
+          const res = await reportApi.debts(); // asOf ไม่ส่งก็ได้ = วันนี้
           if (!alive) return;
           const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
           setDebts(data);
         }
       } catch (e) {
-        setErr(e.message || "โหลดข้อมูลล้มเหลว");
+        setErr(e?.message || "โหลดข้อมูลล้มเหลว");
       } finally {
         setLoading(false);
       }
     }
     load();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [tab]);
 
   // KPI จาก rooms
@@ -149,7 +126,6 @@ export default function ReportsPage() {
 
           <div className="card">
             <h3 className="card-title">สถานะห้องพัก</h3>
-            {/* ✅ ส่งพร็อพให้ถูกชื่อ + บังคับเป็นอาร์เรย์ */}
             <RoomsStatusTable data={Array.isArray(rooms) ? rooms : []} />
           </div>
         </>
@@ -171,17 +147,15 @@ export default function ReportsPage() {
                 {(Array.isArray(revenue) ? revenue : []).length ? (
                   (revenue || []).map((r, i) => (
                     <tr key={i} className="tr">
-                      <td className="td">{r.month_label || r.month}</td>
+                      <td className="td">{r.month_label || r.month || r.period_ym || r.period}</td>
                       <td className="td text-right num">
-                        {Number(r.total || r.amount || 0).toLocaleString()}
+                        {Number(r.total || r.amount || r.total_amount || r.revenue || 0).toLocaleString()}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td className="empty" colSpan={2}>
-                      ยังไม่มีข้อมูล
-                    </td>
+                    <td className="empty" colSpan={2}>ยังไม่มีข้อมูล</td>
                   </tr>
                 )}
               </tbody>
@@ -207,18 +181,16 @@ export default function ReportsPage() {
                 {(Array.isArray(debts) ? debts : []).length ? (
                   (debts || []).map((d, i) => (
                     <tr key={i} className="tr">
-                      <td className="td">{d.room_no || d.room}</td>
-                      <td className="td">{d.tenant_name || "-"}</td>
+                      <td className="td">{d.room_no || d.room || d.roomNo || d.room_number}</td>
+                      <td className="td">{d.tenant_name || d.tenant || "-"}</td>
                       <td className="td text-right num">
-                        {Number(d.amount || d.debt || 0).toLocaleString()}
+                        {Number(d.amount || d.debt || d.total_amount || 0).toLocaleString()}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td className="empty" colSpan={3}>
-                      ไม่มีหนี้ค้างชำระ
-                    </td>
+                    <td className="empty" colSpan={3}>ไม่มีหนี้ค้างชำระ</td>
                   </tr>
                 )}
               </tbody>
@@ -229,4 +201,3 @@ export default function ReportsPage() {
     </div>
   );
 }
-
