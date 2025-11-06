@@ -1,7 +1,7 @@
 // frontend/src/pages/admin/DashboardPage.jsx
 import { useEffect, useMemo, useState } from "react";
 import { dashboardApi } from "../../services/dashboard.api";
-import { UserRound } from "lucide-react";
+import { AlertTriangle, UserRound } from "lucide-react";
 
 const MONTHS_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 
@@ -11,18 +11,32 @@ export default function DashboardPage() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
-        setLoading(true);
-        const res = await dashboardApi.get();
-        setData(res?.data || null);
         setErr("");
+        setLoading(true);
+
+        // บางโปรเจกต์ dashboardApi.get() คืน response.data
+        // บางโปรเจกต์คืน { data: ... } — ทำให้ robust รองรับทั้งคู่
+        const res = await dashboardApi.get();
+        const payload =
+          res && typeof res === "object"
+            ? (res.data ?? res)       // ถ้ามี .data เอา .data, ถ้าไม่มีก็เอา res
+            : null;
+
+        if (alive) setData(payload);
       } catch (e) {
-        setErr(e?.response?.data?.message || e.message || "โหลดข้อมูลไม่สำเร็จ");
+        const msg =
+          e?.response?.data?.message ||
+          e?.message ||
+          "โหลดข้อมูลไม่สำเร็จ";
+        setErr(msg);
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => { alive = false; };
   }, []);
 
   const fmtMoney = (n) =>
@@ -46,30 +60,38 @@ export default function DashboardPage() {
       {err && (
         <div className="alert">
           <div className="alert__bar" />
-          <div>{err}</div>
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600" />
+            <span>{err}</span>
+            {String(err).includes("502") && (
+              <span className="text-slate-500">
+                • ตรวจสอบเซิร์ฟเวอร์ หรือค่า <code>REACT_APP_API*</code> ใน .env
+              </span>
+            )}
+          </div>
         </div>
       )}
       {loading && <div className="panel">กำลังโหลด…</div>}
 
       {!loading && data && (
         <>
-          {/* Stats — ลดช่องไฟ + พื้นหลังไล่เฉดอ่อน */}
+          {/* Stats */}
           <section className="stats">
-            <Stat title="ห้องทั้งหมด"           value={data.rooms_total}                     icon="🏠" tone="indigo" />
-            <Stat title="ผู้เช่าทั้งหมด"         value={data.tenants_total}                   icon="👥" tone="violet" />
-            <Stat title="บิลค้าง/รอดำเนินการ"    value={data.invoices_open}                   icon="🧾" tone="amber" />
-            <Stat title="ยอดค้างรวม (บาท)"       value={fmtMoney(data.outstanding_total)}     icon="💰" tone="emerald" />
-            <Stat title="คำขอชำระค้างตรวจ"       value={data.payments_pending}                icon="✅" tone="sky" />
-            <Stat title="รายได้เดือนนี้ (บาท)"    value={fmtMoney(data.revenue_this_month)}    icon="📈" tone="pink" />
-            <Stat title="บิลที่ออกเดือนนี้"       value={data.invoices_this_month?.count ?? 0} icon="📄" tone="purple" />
-            <Stat title="ยอดบิลเดือนนี้ (บาท)"    value={fmtMoney(data.invoices_this_month?.amount)} icon="💳" tone="yellow" />
+            <Stat title="ห้องทั้งหมด"           value={data.rooms_total ?? 0}                         icon="🏠" tone="indigo" />
+            <Stat title="ผู้เช่าทั้งหมด"         value={data.tenants_total ?? 0}                       icon="👥" tone="violet" />
+            <Stat title="บิลค้าง/รอดำเนินการ"    value={data.invoices_open ?? 0}                       icon="🧾" tone="amber" />
+            <Stat title="ยอดค้างรวม (บาท)"       value={fmtMoney(data.outstanding_total)}              icon="💰" tone="emerald" />
+            <Stat title="คำขอชำระค้างตรวจ"       value={data.payments_pending ?? 0}                    icon="✅" tone="sky" />
+            <Stat title="รายได้เดือนนี้ (บาท)"    value={fmtMoney(data.revenue_this_month)}             icon="📈" tone="pink" />
+            <Stat title="บิลที่ออกเดือนนี้"       value={data.invoices_this_month?.count ?? 0}          icon="📄" tone="purple" />
+            <Stat title="ยอดบิลเดือนนี้ (บาท)"    value={fmtMoney(data.invoices_this_month?.amount)}    icon="💳" tone="yellow" />
           </section>
 
-          {/* Charts — กรอบพื้นหลังมี tint อ่อน ลดความขาวโล่ง */}
+          {/* Charts */}
           <section className="grid-3">
             <ChartBlock title="รายได้ต่อเดือน (บาท)">
               <Bars
-                values={data.revenue_by_month}
+                values={data.revenue_by_month || []}
                 max={maxRevenue}
                 labels={MONTHS_TH}
                 format={fmtMoney}
@@ -79,7 +101,7 @@ export default function DashboardPage() {
 
             <ChartBlock title="ยอดบิลที่ออกต่อเดือน (บาท)">
               <Bars
-                values={data.invoices_amount_by_month}
+                values={data.invoices_amount_by_month || []}
                 max={maxInvAmount}
                 labels={MONTHS_TH}
                 format={fmtMoney}
@@ -89,7 +111,7 @@ export default function DashboardPage() {
 
             <ChartBlock title="จำนวนบิลต่อเดือน (ฉบับ)">
               <Bars
-                values={data.invoices_count_by_month}
+                values={data.invoices_count_by_month || []}
                 max={maxInvCount}
                 labels={MONTHS_TH}
                 format={(v) => `${v}`}
@@ -98,7 +120,7 @@ export default function DashboardPage() {
             </ChartBlock>
           </section>
 
-          {/* Top 5 Debtors — อยู่ในกรอบเดียวกับกราฟ ลดช่องว่าง + ใส่ divider อ่อน */}
+          {/* Top 5 Debtors */}
           <section className="grid-1">
             <ChartBlock title="ลูกหนี้สูงสุด (Top 5)">
               <TopDebtors list={Array.isArray(data.top_debtors) ? data.top_debtors : []} fmtMoney={fmtMoney} />
@@ -148,12 +170,13 @@ function ChartBlock({ title, children }) {
 }
 
 function Bars({ values = [], max = 1, labels = [], format = (v) => v, barColor }) {
-  const total = values.reduce((s, n) => s + Number(n || 0), 0);
+  const safe = Array.isArray(values) ? values : [];
+  const total = safe.reduce((s, n) => s + Number(n || 0), 0);
   return (
     <>
       <div className="bars">
-        {values.map((v, i) => {
-          const h = Math.max(2, Math.round((Number(v || 0) / max) * 136)); // สูงสุด ~136px
+        {safe.map((v, i) => {
+          const h = Math.max(2, Math.round((Number(v || 0) / max) * 136));
           return (
             <div key={i} className="bar" title={`${labels[i] ?? ""}: ${format(v)}`}>
               <div className="bar__rect" style={{ height: h, background: barColor }} />
@@ -168,7 +191,7 @@ function Bars({ values = [], max = 1, labels = [], format = (v) => v, barColor }
 }
 
 function TopDebtors({ list = [], fmtMoney }) {
-  const top = list.slice(0, 5);
+  const top = (Array.isArray(list) ? list : []).slice(0, 5);
   if (top.length === 0) return <div className="empty">— ไม่มีข้อมูลลูกหนี้ —</div>;
 
   return (
@@ -182,7 +205,9 @@ function TopDebtors({ list = [], fmtMoney }) {
               <div className="debtor__sub">
                 <span className="debtor__chip">ห้อง {r.room_no ?? "-"}</span>
                 <span className="debtor__dot">•</span>
-                <span className="debtor__due">ครบกำหนดล่าสุด: {r.last_due ? new Date(r.last_due).toLocaleDateString() : "-"}</span>
+                <span className="debtor__due">
+                  ครบกำหนดล่าสุด: {r.last_due ? new Date(r.last_due).toLocaleDateString() : "-"}
+                </span>
               </div>
             </div>
           </div>
@@ -193,7 +218,7 @@ function TopDebtors({ list = [], fmtMoney }) {
   );
 }
 
-/* ============== Styles (คุมโทนไม่ฉูดฉาด, ลดพื้นที่ขาว) ============== */
+/* ============== Styles ============== */
 const styles = `
 :root{
   --bg: #f6f8fb;
@@ -205,7 +230,6 @@ const styles = `
 }
 
 .dash{
-  /* พื้นหลังแบบ subtle gradient + pattern เบามากเพื่อลดความขาวล้วน */
   background:
     radial-gradient(1200px 600px at -10% -10%, #eef2ff 0%, transparent 35%),
     radial-gradient(900px 500px at 110% 0%, #ecfdf5 0%, transparent 40%),
@@ -226,11 +250,9 @@ const styles = `
   padding:.2rem .6rem; font-size:.78rem; font-weight:700;
 }
 
-/* Alert */
 .alert{ display:flex; gap:10px; align-items:center; background:#fff1f2; border:1px solid #fecdd3; border-radius:12px; padding:10px 12px; margin-bottom:10px; box-shadow:var(--shadow); }
 .alert__bar{ width:6px; align-self:stretch; background:#ef4444; border-radius:6px; }
 
-/* Stats zone (compact กว่าเดิม) */
 .stats{
   display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap:10px; margin-bottom:10px;
@@ -248,22 +270,18 @@ const styles = `
 .stat__title{ font-size:.88rem; color:#4b5563; }
 .stat__value{ font-weight:900; font-size:1.28rem; color:#111827; }
 
-/* Panels */
 .panel{
   background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px;
   box-shadow: var(--shadow);
 }
 .panel--tint{
-  /* พื้นหลังมี tint อ่อน ๆ เพื่อลดความขาวโล่ง */
   background: linear-gradient(180deg, #ffffff, #fbfbfd);
 }
 .panel__title{ font-weight:900; margin-bottom:6px; color:#111827; }
 
-/* Grids */
 .grid-3{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; margin-bottom:10px; }
 .grid-1{ display:grid; grid-template-columns: 1fr; }
 
-/* Bars */
 .bars{
   display:flex; align-items:flex-end; gap:8px; height:160px;
   margin-top:6px; padding:10px;
@@ -274,7 +292,6 @@ const styles = `
 .bar__label{ margin-top:6px; font-size:.75rem; color:#64748b; }
 .bars__total{ margin-top:6px; font-size:.84rem; color:#475569; }
 
-/* Top debtors */
 .debtor{ list-style:none; padding:0; margin:4px 0 0; display:flex; flex-direction:column; gap:8px; }
 .debtor__item{
   display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -291,6 +308,5 @@ const styles = `
 .debtor__due{ white-space:nowrap; }
 .debtor__amt{ font-weight:900; color:#0f172a; white-space:nowrap; }
 
-/* Empty */
 .empty{ text-align:center; color:#6b7280; padding:18px 0; }
 `;

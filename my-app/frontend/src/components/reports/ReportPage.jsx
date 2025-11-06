@@ -1,38 +1,93 @@
 // frontend/src/pages/reports/ReportsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import RoomsStatusTable from "../../components/reports/RoomsStatusTable";
-import { reportApi } from "../../services/report.api"; // ← ใช้ service เดียว
+import RoomsStatusReport from "../../components/reports/RoomsStatusReport";
+import RevenueMonthlyChart from "../../components/reports/RevenueMonthlyChart";
+import RevenueDailyChart from "../../components/reports/RevenueDailyChart";
+import DebtsTable from "../../components/reports/DebtsTable";
+import PaymentsTable from "../../components/reports/PaymentsTable";
+import UtilitiesTable from "../../components/reports/UtilitiesTable";
+import { reportApi } from "../../api/reports.api";
 
+// NOTE: ปุ่ม/แท็บหลัก: rooms | revenue | debts | payments | utilities
 export default function ReportsPage() {
-  const [tab, setTab] = useState("rooms"); // 'rooms' | 'revenue' | 'debts'
+  const [tab, setTab] = useState("rooms");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
+  // state per tab
   const [rooms, setRooms] = useState([]);
-  const [revenue, setRevenue] = useState([]);
+  const [revenueMonthly, setRevenueMonthly] = useState([]);
+  const [revenueDaily, setRevenueDaily] = useState([]);
   const [debts, setDebts] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [utilsData, setUtilsData] = useState([]);
 
+  // filters
+  const [months, setMonths] = useState(6);
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [asOf, setAsOf] = useState("");
+  const [period, setPeriod] = useState("");
+
+  // โหลดข้อมูลตามแท็บ
   useEffect(() => {
     let alive = true;
+
     async function load() {
-      setErr("");
-      setLoading(true);
       try {
+        setErr("");
+        setLoading(true);
+
         if (tab === "rooms") {
           const res = await reportApi.roomsStatus();
           if (!alive) return;
-          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-          setRooms(data);
-        } else if (tab === "revenue") {
-          const res = await reportApi.revenueMonthly(6);
+          setRooms(Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []);
+        }
+
+        if (tab === "revenue") {
+          // monthly
+          const monthly = await reportApi.revenueMonthly(months);
           if (!alive) return;
-          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-          setRevenue(data);
-        } else if (tab === "debts") {
-          const res = await reportApi.debts(); // asOf ไม่ส่งก็ได้ = วันนี้
+          setRevenueMonthly(
+            Array.isArray(monthly) ? monthly : Array.isArray(monthly?.data) ? monthly.data : []
+          );
+
+          // daily (ช่วงวันที่ ถ้าผู้ใช้เลือก)
+          if (range.from && range.to) {
+            const daily = await reportApi.revenueDaily(range.from, range.to);
+            setRevenueDaily(
+              Array.isArray(daily) ? daily : Array.isArray(daily?.data) ? daily.data : []
+            );
+          } else {
+            setRevenueDaily([]);
+          }
+        }
+
+        if (tab === "debts") {
+          const res = await reportApi.debts(asOf);
           if (!alive) return;
-          const data = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-          setDebts(data);
+          setDebts(Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []);
+        }
+
+        if (tab === "payments") {
+          if (range.from && range.to) {
+            const res = await reportApi.payments(range.from, range.to);
+            if (!alive) return;
+            setPayments(Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []);
+          } else {
+            setPayments([]);
+          }
+        }
+
+        if (tab === "utilities") {
+          if (period) {
+            const res = await reportApi.meterMonthly(period);
+            if (!alive) return;
+            const d =
+              Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+            setUtilsData(d);
+          } else {
+            setUtilsData([]);
+          }
         }
       } catch (e) {
         setErr(e?.message || "โหลดข้อมูลล้มเหลว");
@@ -40,24 +95,20 @@ export default function ReportsPage() {
         setLoading(false);
       }
     }
+
     load();
     return () => { alive = false; };
-  }, [tab]);
+  }, [tab, months, range?.from, range?.to, asOf, period]);
 
-  // KPI จาก rooms
-  const kpi = useMemo(() => {
+  // KPI rooms (ป้องกัน key ต่างภาษา)
+  const kpiRooms = useMemo(() => {
     const list = Array.isArray(rooms) ? rooms : [];
     const total = list.length;
-    const vacant = list.filter(
-      (r) => (r.status || r.room_status) === "vacant" || r.status_th === "ว่าง"
-    ).length;
-    const occupied = list.filter(
-      (r) => (r.status || r.room_status) === "occupied" || r.status_th === "พักอยู่"
-    ).length;
-    const overdue = list.filter(
-      (r) => (r.status || r.room_status) === "overdue" || r.status_th === "ค้างชำระ"
-    ).length;
-    return { total, vacant, occupied, overdue };
+    const status = (r) => String(r.status || r.room_status || r.status_th || "").toLowerCase();
+    const vacant   = list.filter((r) => /(vacant|ว่าง)/.test(status(r))).length;
+    const occupied = list.filter((r) => /(occupied|พักอยู่)/.test(status(r))).length;
+    const pending  = list.filter((r) => /(pending|รอเข้าพัก)/.test(status(r))).length;
+    return { total, vacant, occupied, pending };
   }, [rooms]);
 
   return (
@@ -66,136 +117,101 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div className="tabs" role="tablist" aria-label="รายงาน">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "rooms"}
-          className={`tab-btn ${tab === "rooms" ? "is-active" : ""}`}
-          onClick={() => setTab("rooms")}
-        >
-          สถานะห้อง
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "revenue"}
-          className={`tab-btn ${tab === "revenue" ? "is-active" : ""}`}
-          onClick={() => setTab("revenue")}
-        >
-          รายได้รายเดือน
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "debts"}
-          className={`tab-btn ${tab === "debts" ? "is-active" : ""}`}
-          onClick={() => setTab("debts")}
-        >
-          ค้างชำระ
-        </button>
+        {[
+          ["rooms","สถานะห้อง"],
+          ["revenue","รายได้"],
+          ["debts","ค้างชำระ"],
+          ["payments","การชำระเงิน"],
+          ["utilities","ค่าน้ำ/ไฟ"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab-btn ${tab === key ? "is-active" : ""}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {loading && <div className="loading-text">กำลังโหลด…</div>}
       {err && <div className="error-text">ผิดพลาด: {err}</div>}
 
-      {/* Rooms tab */}
+      {/* ROOMS */}
       {tab === "rooms" && !loading && (
         <>
           <div className="kpi-grid">
-            <div className="kpi">
-              <div className="kpi-title">ห้องทั้งหมด</div>
-              <div className="kpi-value">{kpi.total}</div>
-              <div className="kpi-sub">รวมทุกสถานะ</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-title">ว่าง</div>
-              <div className="kpi-value">{kpi.vacant}</div>
-              <div className="kpi-sub">พร้อมปล่อยเช่า</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-title">พักอยู่</div>
-              <div className="kpi-value">{kpi.occupied}</div>
-              <div className="kpi-sub">ผู้เช่าแอคทีฟ</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-title">ค้างชำระ</div>
-              <div className="kpi-value">{kpi.overdue}</div>
-              <div className="kpi-sub">ต้องติดตาม</div>
-            </div>
+            <div className="kpi"><div className="kpi-title">ห้องทั้งหมด</div><div className="kpi-value">{kpiRooms.total}</div></div>
+            <div className="kpi"><div className="kpi-title">ว่าง</div><div className="kpi-value">{kpiRooms.vacant}</div></div>
+            <div className="kpi"><div className="kpi-title">พักอยู่</div><div className="kpi-value">{kpiRooms.occupied}</div></div>
+            <div className="kpi"><div className="kpi-title">รอเข้าพัก</div><div className="kpi-value">{kpiRooms.pending}</div></div>
           </div>
 
           <div className="card">
             <h3 className="card-title">สถานะห้องพัก</h3>
-            <RoomsStatusTable data={Array.isArray(rooms) ? rooms : []} />
+            <RoomsStatusReport data={Array.isArray(rooms) ? rooms : []} />
           </div>
         </>
       )}
 
-      {/* Revenue tab */}
+      {/* REVENUE */}
       {tab === "revenue" && !loading && (
-        <div className="card">
-          <h3 className="card-title">รายได้รายเดือน</h3>
-          <div className="table-wrap">
-            <table className="table">
-              <thead className="thead">
-                <tr>
-                  <th className="th">เดือน</th>
-                  <th className="th text-right">รายได้ (บาท)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(Array.isArray(revenue) ? revenue : []).length ? (
-                  (revenue || []).map((r, i) => (
-                    <tr key={i} className="tr">
-                      <td className="td">{r.month_label || r.month || r.period_ym || r.period}</td>
-                      <td className="td text-right num">
-                        {Number(r.total || r.amount || r.total_amount || r.revenue || 0).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="empty" colSpan={2}>ยังไม่มีข้อมูล</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        <>
+          <div className="card">
+            <h3 className="card-title">รายได้รายเดือน</h3>
+            <RevenueMonthlyChart
+              data={Array.isArray(revenueMonthly) ? revenueMonthly : []}
+              months={months}
+              setMonths={setMonths}
+              onMonthClick={() => {}}
+            />
           </div>
-        </div>
+
+          <div className="card mt-6">
+            <h3 className="card-title">รายได้รายวัน</h3>
+            <RevenueDailyChart
+              data={Array.isArray(revenueDaily) ? revenueDaily : []}
+              range={range}
+              setRange={setRange}
+              onDateClick={() => {}}
+            />
+          </div>
+        </>
       )}
 
-      {/* Debts tab */}
+      {/* DEBTS */}
       {tab === "debts" && !loading && (
         <div className="card">
           <h3 className="card-title">รายการค้างชำระ</h3>
-          <div className="table-wrap">
-            <table className="table">
-              <thead className="thead">
-                <tr>
-                  <th className="th">ห้อง</th>
-                  <th className="th">ผู้เช่า</th>
-                  <th className="th text-right">ยอดค้าง (บาท)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(Array.isArray(debts) ? debts : []).length ? (
-                  (debts || []).map((d, i) => (
-                    <tr key={i} className="tr">
-                      <td className="td">{d.room_no || d.room || d.roomNo || d.room_number}</td>
-                      <td className="td">{d.tenant_name || d.tenant || "-"}</td>
-                      <td className="td text-right num">
-                        {Number(d.amount || d.debt || d.total_amount || 0).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="empty" colSpan={3}>ไม่มีหนี้ค้างชำระ</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+          <DebtsTable data={Array.isArray(debts) ? debts : []} asOf={asOf} setAsOf={setAsOf} />
+        </div>
+      )}
+
+      {/* PAYMENTS */}
+      {tab === "payments" && !loading && (
+        <div className="card">
+          <h3 className="card-title">การชำระเงิน</h3>
+          <PaymentsTable data={Array.isArray(payments) ? payments : []} range={range} setRange={setRange} />
+        </div>
+      )}
+
+      {/* UTILITIES */}
+      {tab === "utilities" && !loading && (
+        <div className="card">
+          <h3 className="card-title">รายงานค่าน้ำ/ค่าไฟ</h3>
+          <div className="mb-3">
+            <label className="text-sm text-slate-700">เลือกงวด (YYYY-MM)</label>{" "}
+            <input
+              type="month"
+              value={period || ""}
+              onChange={(e) => setPeriod(e.target.value)}
+              className="border px-2 py-1 rounded"
+            />
           </div>
+          <UtilitiesTable data={utilsData} period={period} setPeriod={setPeriod} />
         </div>
       )}
     </div>
