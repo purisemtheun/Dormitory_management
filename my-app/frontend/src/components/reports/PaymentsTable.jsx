@@ -1,7 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { CalendarDays, Search, Receipt, UserRound, Home, CheckCircle2, Clock, XCircle, AlertTriangle } from "lucide-react";
 
-/* ============== Helpers ============== */
+const arr = (d) =>
+  Array.isArray(d) ? d :
+  Array.isArray(d?.rows) ? d.rows :
+  Array.isArray(d?.data) ? d.data :
+  Array.isArray(d?.items) ? d.items :
+  Array.isArray(d?.result) ? d.result : [];
+
 const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const fmtDate = (v) => {
@@ -9,7 +15,7 @@ const fmtDate = (v) => {
   try {
     const d = new Date(v);
     if (Number.isNaN(+d)) return String(v).slice(0, 10);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return d.toISOString().slice(0, 10);
   } catch {
     return String(v).slice(0, 10);
   }
@@ -35,7 +41,6 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-/* ============== Small UI pieces ============== */
 function KPI({ title, value, tone = "slate" }) {
   const toneMap = {
     slate:   "bg-white border-slate-200",
@@ -50,45 +55,40 @@ function KPI({ title, value, tone = "slate" }) {
     </div>
   );
 }
-function Th({ children, className = "" }) {
-  return <th className={`px-6 py-3.5 text-sm font-semibold ${className}`}>{children}</th>;
-}
-function TdRight({ children, className = "" }) {
-  return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>;
-}
+function Th({ children, className = "" }) { return <th className={`px-6 py-3.5 text-sm font-semibold ${className}`}>{children}</th>; }
+function TdRight({ children, className = "" }) { return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>; }
 
-/* ============== Main Component ============== */
 export default function PaymentsTable({ data, range, setRange }) {
-  const items = Array.isArray(data) ? data : [];
+  const items = arr(data);
 
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState("all"); // all | approved | pending | rejected | partial | unpaid | overdue
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return items.filter((p = {}) => {
-      const d = fmtDate(p.paid_at ?? p.payment_date ?? p.date ?? p.paidAt);
+    return items.filter((p) => {
+      const d = fmtDate(p.paid_at || p.payment_date || p.date || p.paidAt);
       if (range?.from && d && d < range.from) return false;
       if (range?.to && d && d > range.to) return false;
 
       if (status !== "all") {
-        const raw = String(p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "").toLowerCase();
+        const raw = String(p.payment_status || p.pay_status || p.status || p.invoice_status || "").toLowerCase();
         if (raw !== status) return false;
       }
 
       if (!term) return true;
-      const room  = String(p.room_no ?? p.room_number ?? p.roomNo ?? p.room ?? p.room_id ?? p.roomId ?? "").toLowerCase();
-      const bill  = String(p.invoice_no ?? p.invoiceNo ?? p.invoice_id ?? p.invoiceId ?? p.bill_no ?? "").toLowerCase();
-      const payer = String(p.payer_name ?? p.tenant_name ?? p.fullname ?? p.name ?? p.tenant_fullname ?? p.payer ?? p.tenant_id ?? "").toLowerCase();
+      const room   = String(p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "").toLowerCase();
+      const bill   = String(p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "").toLowerCase();
+      const payer  = String(p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "").toLowerCase();
       return room.includes(term) || bill.includes(term) || payer.includes(term);
     });
   }, [items, status, q, range?.from, range?.to]);
 
   const kpi = useMemo(() => {
-    const total = filtered.reduce((sum, p = {}) => sum + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0);
+    const total = filtered.reduce((sum, p) => sum + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0);
     const count = filtered.length;
-    const pending = filtered.filter((p = {}) =>
-      ["pending"].includes(String(p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "").toLowerCase())
+    const pending = filtered.filter((p) =>
+      ["pending"].includes(String(p.payment_status || p.pay_status || p.status || p.invoice_status || "").toLowerCase())
     ).length;
     return { total, count, pending };
   }, [filtered]);
@@ -107,9 +107,7 @@ export default function PaymentsTable({ data, range, setRange }) {
               <p className="text-slate-600 text-sm mt-0.5">สรุปยอดที่ชำระตามช่วงเวลา • ค้นหา • กรองสถานะ</p>
             </div>
           </div>
-          <p className="text-xs text-slate-500">
-            * ค้างชำระได้ไม่เกิน <b className="text-rose-600">2 เดือน</b> หรือ <b className="text-rose-600">60 วัน</b>
-          </p>
+          <p className="text-xs text-slate-500">* ค้างชำระได้ไม่เกิน <b className="text-rose-600">2 เดือน</b> หรือ <b className="text-rose-600">60 วัน</b></p>
         </div>
       </div>
 
@@ -127,12 +125,8 @@ export default function PaymentsTable({ data, range, setRange }) {
             <span className="text-xs text-slate-600">วันที่เริ่มต้น</span>
             <div className="relative">
               <CalendarDays className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="date"
-                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
-                value={range?.from || ""}
-                onChange={(e) => setRange?.((p) => ({ ...(p || {}), from: e.target.value }))}
-              />
+              <input type="date" className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                value={range?.from || ""} onChange={(e) => setRange?.((p) => ({ ...p, from: e.target.value }))} />
             </div>
           </label>
 
@@ -140,22 +134,15 @@ export default function PaymentsTable({ data, range, setRange }) {
             <span className="text-xs text-slate-600">ถึง</span>
             <div className="relative">
               <CalendarDays className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="date"
-                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
-                value={range?.to || ""}
-                onChange={(e) => setRange?.((p) => ({ ...(p || {}), to: e.target.value }))}
-              />
+              <input type="date" className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                value={range?.to || ""} onChange={(e) => setRange?.((p) => ({ ...p, to: e.target.value }))} />
             </div>
           </label>
 
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-600">สถานะ</span>
-            <select
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            >
+            <select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+              value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="all">ทั้งหมด</option>
               <option value="approved">ชำระเสร็จสิ้น</option>
               <option value="pending">รอตรวจสอบ</option>
@@ -170,12 +157,8 @@ export default function PaymentsTable({ data, range, setRange }) {
             <span className="text-xs text-slate-600">ค้นหา</span>
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
-                placeholder="เลขบิล / ห้อง / ชื่อผู้ชำระ"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+              <input className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                placeholder="เลขบิล / ห้อง / ชื่อผู้ชำระ" value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
           </label>
         </div>
@@ -204,39 +187,22 @@ export default function PaymentsTable({ data, range, setRange }) {
                   </td>
                 </tr>
               ) : (
-                filtered.map((p = {}, i) => {
-                  const paidDate = p.paid_at ?? p.payment_date ?? p.date ?? p.paidAt;
-                  const room = p.room_no ?? p.room_number ?? p.roomNo ?? p.room ?? p.room_id ?? p.roomId ?? "-";
-                  const invoiceNo = p.invoice_no ?? p.invoiceNo ?? p.invoice_id ?? p.invoiceId ?? p.bill_no ?? "-";
+                filtered.map((p, i) => {
+                  const paidDate = p.paid_at || p.payment_date || p.date || p.paidAt;
+                  const room = p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "-";
+                  const invoiceNo = p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "-";
                   const amount = Number(p.amount ?? p.total ?? p.amount_paid ?? 0);
-                  const payer = p.payer_name ?? p.tenant_name ?? p.fullname ?? p.name ?? p.tenant_fullname ?? p.payer ?? p.tenant_id ?? "-";
-                  const rawStatus = p.payment_status ?? p.pay_status ?? p.status ?? p.invoice_status ?? "";
+                  const payer = p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "-";
+                  const rawStatus = p.payment_status || p.pay_status || p.status || p.invoice_status || "";
 
                   return (
                     <tr key={`${invoiceNo}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
                       <td className="px-6 py-4">{fmtDate(paidDate)}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <Home className="w-4 h-4 text-slate-400" />
-                          <span className="font-medium text-slate-900">{room}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <Receipt className="w-4 h-4 text-slate-400" />
-                          <span className="font-medium">{invoiceNo}</span>
-                        </div>
-                      </td>
+                      <td className="px-6 py-4"><div className="flex items-center gap-2"><Home className="w-4 h-4 text-slate-400" /><span className="font-medium text-slate-900">{room}</span></div></td>
+                      <td className="px-6 py-4"><div className="flex items-center gap-2"><Receipt className="w-4 h-4 text-slate-400" /><span className="font-medium">{invoiceNo}</span></div></td>
                       <TdRight className="font-semibold text-slate-900">{thb(amount)}</TdRight>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-slate-800">
-                          <UserRound className="w-4 h-4 text-slate-400" />
-                          <span>{payer}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <StatusBadge status={rawStatus} />
-                      </td>
+                      <td className="px-6 py-4"><div className="flex items-center gap-2 text-slate-800"><UserRound className="w-4 h-4 text-slate-400" /><span>{payer}</span></div></td>
+                      <td className="px-6 py-4"><StatusBadge status={rawStatus} /></td>
                     </tr>
                   );
                 })
@@ -248,7 +214,7 @@ export default function PaymentsTable({ data, range, setRange }) {
                 <tr className="bg-indigo-50 border-t border-indigo-100">
                   <td className="px-6 py-3 font-semibold text-slate-900" colSpan={3}>รวมทั้งสิ้น</td>
                   <TdRight className="font-bold text-slate-900">
-                    {thb(filtered.reduce((s, p = {}) => s + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0))}
+                    {thb(filtered.reduce((s, p) => s + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0))}
                   </TdRight>
                   <td className="px-6 py-3 text-slate-700" colSpan={2}>ใบชำระทั้งหมด {filtered.length} ใบ</td>
                 </tr>

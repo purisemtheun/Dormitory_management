@@ -1,71 +1,61 @@
 import React, { useMemo } from "react";
 import { BarChart3, Coins, Droplet, Zap, CalendarRange, ChevronDown } from "lucide-react";
 
+const arr = (d) =>
+  Array.isArray(d) ? d :
+  Array.isArray(d?.rows) ? d.rows :
+  Array.isArray(d?.data) ? d.data :
+  Array.isArray(d?.items) ? d.items :
+  Array.isArray(d?.result) ? d.result : [];
+
 export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, onMonthClick }) {
-  const toNum = (v) => Number(v ?? 0) || 0;
-  const thb = (n) =>
-    toNum(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const num = (v) => Number(v ?? 0) || 0;
+  const thb = (n) => num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const rows = useMemo(() => arr(data), [data]);
 
   const ymLabel = (ym) => {
-    const s = String(ym ?? "");
-    const parts = s.split("-");
-    if (parts.length < 2) return s || "-";
-    const [y, m] = parts;
+    const [y, m] = String(ym).split("-");
     const d = new Date(`${y}-${m}-01T00:00:00`);
-    if (Number.isNaN(+d)) return s || "-";
     return d.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
   };
 
-  // ---- Helper: breakdown (ปลอดภัยต่อ field ขาด/ชนิดเพี้ยน)
-  const toBreakdown = (row = {}) => {
+  const toBreakdown = (row) => {
     const billed = {
-      rent:    toNum(row.rent_amount),
-      water:   toNum(row.water_amount),
-      electric:toNum(row.electric_amount),
-      total:   toNum(row.total_amount ?? row.total ?? row.revenue),
-      rooms:   toNum(row.rooms_count ?? row.rooms),
+      rent:    num(row.rent_amount),
+      water:   num(row.water_amount),
+      electric:num(row.electric_amount),
+      total:   num(row.total_amount ?? row.total ?? row.revenue ?? 0),
+      rooms:   num(row.rooms_count ?? row.rooms ?? 0),
     };
-
     const hasCollectedKeys = ["rent_collected","water_collected","electric_collected"]
-      .some((k) => Object.prototype.hasOwnProperty.call(row || {}, k));
+      .some((k) => Object.prototype.hasOwnProperty.call(row, k));
 
     const collected = {
-      rent:    toNum(row.rent_collected),
-      water:   toNum(row.water_collected),
-      electric:toNum(row.electric_collected),
-      total:   Object.prototype.hasOwnProperty.call(row || {}, "total_collected")
-                ? toNum(row.total_collected)
-                : null,
+      rent:    num(row.rent_collected),
+      water:   num(row.water_collected),
+      electric:num(row.electric_collected),
+      total:   Object.prototype.hasOwnProperty.call(row, "total_collected") ? num(row.total_collected) : null,
     };
+
+    const useCollectedTotal = collected.total != null ? collected.total : billed.total;
 
     const allCollectedZero = collected.rent === 0 && collected.water === 0 && collected.electric === 0;
-    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && toNum(row.total_collected) > 0;
+    const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && num(row.total_collected) > 0;
 
-    return {
-      rent:     shouldFallbackCategory ? billed.rent     : (hasCollectedKeys ? collected.rent     : billed.rent),
-      water:    shouldFallbackCategory ? billed.water    : (hasCollectedKeys ? collected.water    : billed.water),
-      electric: shouldFallbackCategory ? billed.electric : (hasCollectedKeys ? collected.electric : billed.electric),
-      total:    collected.total != null ? collected.total : billed.total,
-      rooms:    billed.rooms,
-    };
+    const rent    = shouldFallbackCategory ? billed.rent    : (hasCollectedKeys ? collected.rent    : billed.rent);
+    const water   = shouldFallbackCategory ? billed.water   : (hasCollectedKeys ? collected.water   : billed.water);
+    const electric= shouldFallbackCategory ? billed.electric: (hasCollectedKeys ? collected.electric: billed.electric);
+
+    return { rent, water, electric, total: useCollectedTotal, rooms: billed.rooms };
   };
 
-  // ===== KPI =====
   const kpi = useMemo(() => {
-    const rows = Array.isArray(data) ? data : [];
-    return rows.map(toBreakdown).reduce(
-      (acc, r) => ({
-        months: acc.months + 1,
-        rent: acc.rent + r.rent,
-        water: acc.water + r.water,
-        electric: acc.electric + r.electric,
-        total: acc.total + r.total,
-      }),
+    const s = rows.map(toBreakdown).reduce(
+      (acc, r) => ({ months: acc.months + 1, rent: acc.rent + r.rent, water: acc.water + r.water, electric: acc.electric + r.electric, total: acc.total + r.total }),
       { months: 0, rent: 0, water: 0, electric: 0, total: 0 }
     );
-  }, [data]);
-
-  const rows = Array.isArray(data) ? data : [];
+    return s;
+  }, [rows]);
 
   return (
     <div className="space-y-6">
@@ -89,11 +79,8 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
               <CalendarRange className="w-5 h-5 text-slate-500" />
               <span className="text-sm text-slate-700">เดือนย้อนหลัง</span>
               <input
-                type="number"
-                min={1}
-                max={24}
-                value={Number.isFinite(months) ? months : 6}
-                onChange={(e) => setMonths?.(Number(e.target.value) || 1)}
+                type="number" min={1} max={24} value={months}
+                onChange={(e) => setMonths?.(Number(e.target.value))}
                 className="w-20 pl-2 pr-7 py-1.5 text-right border-0 focus:ring-0 focus:outline-none text-slate-900"
               />
               <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -140,14 +127,10 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
               ) : (
                 rows.map((r, i) => {
                   const b = toBreakdown(r);
-                  const period = r?.period_ym ?? r?.period ?? r?.month ?? "";
+                  const period = r.period_ym ?? r.period ?? r.month;
                   return (
-                    <tr
-                      key={`${period}-${i}`}
-                      className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
-                      onClick={() => onMonthClick?.(period)}
-                      title="คลิกเพื่อดูรายละเอียดเดือนนี้"
-                    >
+                    <tr key={i} className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
+                        onClick={() => onMonthClick?.(period)} title="คลิกเพื่อดูรายละเอียดเดือนนี้">
                       <td className="px-6 py-4 font-semibold text-slate-900">{ymLabel(period)}</td>
                       <TdRight>{thb(b.rent)}</TdRight>
                       <TdRight>{thb(b.water)}</TdRight>
@@ -166,7 +149,6 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
   );
 }
 
-/* ========== Small UI parts ========== */
 function KPICard({ title, value, icon, tone = "slate" }) {
   const map = {
     slate:   { text: "text-slate-700",   ring: "border-slate-400",   bg: "bg-slate-50" },
@@ -185,7 +167,7 @@ function KPICard({ title, value, icon, tone = "slate" }) {
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{value}</p>
         </div>
         <div className={`w-12 h-12 rounded-full ${th.bg} flex items-center justify-center`}>
-          {React.isValidElement(icon) ? React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` }) : null}
+          {React.cloneElement(icon, { className: `w-6 h-6 ${th.text}` })}
         </div>
       </div>
     </div>

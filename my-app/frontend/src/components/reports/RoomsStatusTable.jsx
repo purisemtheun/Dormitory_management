@@ -1,8 +1,7 @@
-// src/components/reports/RoomsStatusTable.jsx
 import React, { useMemo, useState } from "react";
 import {
   Search,
-  ClipboardList, // รายงาน
+  ClipboardList,
   Home,
   Users,
   CircleCheckBig,
@@ -10,18 +9,13 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-/* ========================= Normalizers & Helpers ========================= */
-// บังคับให้เป็นอาร์เรย์: รองรับกรณี API คืน {data: [...]}, null, หรือ error object
-function asArray(input) {
-  if (Array.isArray(input)) return input;
-  if (input && Array.isArray(input.data)) return input.data;
-  if (input && Array.isArray(input.rows)) return input.rows;
-  if (input && Array.isArray(input.items)) return input.items;
-  if (input == null || input === "") return [];
-  // แจ้งเตือนเพื่อ debug แต่ยังให้หน้าไม่ล้ม
-  console.warn("[RoomsStatusTable] non-array data received:", input);
-  return [];
-}
+/* ====== Safe helpers ====== */
+const arr = (d) =>
+  Array.isArray(d) ? d :
+  Array.isArray(d?.rows) ? d.rows :
+  Array.isArray(d?.data) ? d.data :
+  Array.isArray(d?.items) ? d.items :
+  Array.isArray(d?.result) ? d.result : [];
 
 const getRoomId = (r = {}) =>
   String(r.room_id ?? r.roomId ?? r.room_code ?? r.roomCode ?? "").trim();
@@ -50,7 +44,7 @@ const roomLabel = (r = {}) => {
   const no = getRoomNo(r);
   if (id && no) return `${id} (${no})`;
   const any = guessRoomAny(r);
-  return id || no || any || "-";
+  return (id || no || any || "-");
 };
 
 const normalizeStatusKey = (s) => {
@@ -59,7 +53,6 @@ const normalizeStatusKey = (s) => {
   return k;
 };
 
-// โทนสี badge สถานะ
 const statusTheme = {
   vacant:   { text: "ว่าง",     ring: "border-emerald-300", bg: "bg-emerald-50",  dot: "bg-emerald-500",  textColor: "text-emerald-900" },
   occupied: { text: "พักอยู่",   ring: "border-indigo-300",  bg: "bg-indigo-50",   dot: "bg-indigo-600",   textColor: "text-indigo-900" },
@@ -76,9 +69,7 @@ const StatusBadge = ({ status }) => {
     );
   }
   return (
-    <span
-      className={`inline-flex items-center gap-2 rounded-full border ${th.ring} ${th.bg} ${th.textColor} px-3 py-1 text-xs font-medium`}
-    >
+    <span className={`inline-flex items-center gap-2 rounded-full border ${th.ring} ${th.bg} ${th.textColor} px-3 py-1 text-xs font-medium`}>
       <span className={`h-1.5 w-1.5 rounded-full ${th.dot}`} />
       {th.text}
     </span>
@@ -88,18 +79,56 @@ const StatusBadge = ({ status }) => {
 const roomComparator = (a, b) =>
   roomLabel(a).localeCompare(roomLabel(b), undefined, { numeric: true, sensitivity: "base" });
 
-/* ========================= Component ========================= */
-export default function RoomsStatusTable({ data = [] }) {
-  // 🔒 บังคับ normalize ตั้งแต่ต้น ป้องกัน "is not iterable"
-  const safeData = asArray(data);
+/* ====== Component ====== */
+export default function RoomsStatusReport({ data }) {
+  // รองรับรูปแบบ object / array ได้หมด
+  const rows = useMemo(() => arr(data), [data]);
 
   const [q, setQ] = useState("");
   const [statusTab, setStatusTab] = useState("all"); // all | vacant | occupied | pending
   const [sortBy, setSortBy] = useState("room"); // room | tenant
 
+  // KPI – ใช้ summary จาก backend ถ้ามี, ไม่มีก็คำนวณจากแถว
+  const kpi = useMemo(() => {
+    const fallbackCount = () => {
+      const total    = rows.length;
+      const vacant   = rows.filter(r => normalizeStatusKey(r.status || r.room_status) === "vacant").length;
+      const occupied = rows.filter(r => normalizeStatusKey(r.status || r.room_status) === "occupied").length;
+      const pending  = rows.filter(r => normalizeStatusKey(r.status || r.room_status) === "pending").length;
+      return { total, vacant, occupied, pending };
+    };
+
+    // ลองอ่านจากหลายคีย์ที่มักใช้
+    const s = data?.summary ?? data?.counts ?? data;
+    const pickNum = (...keys) => {
+      for (const k of keys) {
+        const v = s?.[k];
+        if (typeof v === "number" && !Number.isNaN(v)) return v;
+      }
+      return null;
+    };
+
+    if (s && typeof s === "object") {
+      const total    = pickNum("total","total_rooms","rooms_total","count","roomsCount");
+      const vacant   = pickNum("vacant","vacant_count","rooms_vacant");
+      const occupied = pickNum("occupied","occupied_count","rooms_occupied");
+      const pending  = pickNum("pending","pending_count","rooms_pending");
+      const any = [total, vacant, occupied, pending].some(v => v != null);
+      if (any) {
+        return {
+          total:    total    ?? rows.length,
+          vacant:   vacant   ?? 0,
+          occupied: occupied ?? 0,
+          pending:  pending  ?? 0,
+        };
+      }
+    }
+    return fallbackCount();
+  }, [data, rows]);
+
   // Filter/Sort
   const filtered = useMemo(() => {
-    const base = [...safeData].sort((a, b) => {
+    const base = [...rows].sort((a, b) => {
       if (sortBy === "tenant") {
         const A = String(a.tenant_name ?? a.tenant ?? "").toLowerCase();
         const B = String(b.tenant_name ?? b.tenant ?? "").toLowerCase();
@@ -113,7 +142,7 @@ export default function RoomsStatusTable({ data = [] }) {
       return normalizeStatusKey(r.status ?? r.room_status) === statusTab;
     });
 
-    const term = q.trim().toLowerCase();
+    const term = (q || "").trim().toLowerCase();
     if (!term) return listByTab;
 
     return listByTab.filter((r) => {
@@ -124,16 +153,7 @@ export default function RoomsStatusTable({ data = [] }) {
       const isThai = (term === "ว่าง" && sKey === "vacant") || (term === "พักอยู่" && sKey === "occupied") || (term === "รอเข้าพัก" && sKey === "pending");
       return room.includes(term) || tenant.includes(term) || sTh.includes(term) || isThai;
     });
-  }, [safeData, statusTab, q, sortBy]);
-
-  // KPIs
-  const kpi = useMemo(() => {
-    const total    = safeData.length;
-    const vacant   = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "vacant").length;
-    const occupied = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "occupied").length;
-    const pending  = safeData.filter(r => normalizeStatusKey(r.status || r.room_status) === "pending").length;
-    return { total, vacant, occupied, pending };
-  }, [safeData]);
+  }, [rows, statusTab, q, sortBy]);
 
   return (
     <div className="space-y-6">
@@ -154,7 +174,7 @@ export default function RoomsStatusTable({ data = [] }) {
         </div>
       </div>
 
-      {/* KPI row */}
+      {/* KPI */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPI title="ห้องทั้งหมด" value={kpi.total} icon={<Home />} tone="slate" />
         <KPI title="ว่าง" value={kpi.vacant} icon={<CircleCheckBig />} tone="emerald" />
@@ -165,7 +185,6 @@ export default function RoomsStatusTable({ data = [] }) {
       {/* Controls */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          {/* Search */}
           <div className="flex-1">
             <div className="relative">
               <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -178,7 +197,6 @@ export default function RoomsStatusTable({ data = [] }) {
             </div>
           </div>
 
-          {/* Sort */}
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-slate-700">เรียงตาม</span>
             <div className="relative">
@@ -195,14 +213,13 @@ export default function RoomsStatusTable({ data = [] }) {
           </div>
         </div>
 
-        {/* Status pills */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Pill active={statusTab === "all"} onClick={() => setStatusTab("all")} label="ทั้งหมด" tone="slate" />
           <Pill active={statusTab === "vacant"} onClick={() => setStatusTab("vacant")} label={`ว่าง (${kpi.vacant})`} tone="emerald" />
           <Pill active={statusTab === "occupied"} onClick={() => setStatusTab("occupied")} label={`พักอยู่ (${kpi.occupied})`} tone="indigo" />
           <Pill active={statusTab === "pending"} onClick={() => setStatusTab("pending")} label={`รอเข้าพัก (${kpi.pending})`} tone="amber" />
           <span className="ml-auto text-sm font-medium text-slate-600">
-            แสดงผล {filtered.length} จาก {safeData.length} ห้อง
+            แสดงผล {filtered.length} จาก {rows.length} ห้อง
           </span>
         </div>
       </div>
@@ -221,7 +238,7 @@ export default function RoomsStatusTable({ data = [] }) {
             <tbody className="divide-y divide-slate-100">
               {filtered.length ? (
                 filtered.map((r, i) => (
-                  <tr key={`${roomLabel(r)}-${i}`} className="hover:bg-indigo-50/30 transition-colors text-[16px]">
+                  <tr key={i} className="hover:bg-indigo-50/30 transition-colors text-[16px]">
                     <td className="px-6 py-4 font-bold text-slate-900">{roomLabel(r)}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status || r.room_status} /></td>
                     <td className="px-6 py-4 text-slate-800">{r.tenant_name || r.tenant || "-"}</td>
@@ -242,7 +259,7 @@ export default function RoomsStatusTable({ data = [] }) {
   );
 }
 
-/* ========================= Tiny UI pieces ========================= */
+/* ====== tiny UI pieces ====== */
 function KPI({ title, value, icon, tone = "slate" }) {
   const toneMap = {
     slate:   { text: "text-slate-700",   border: "border-slate-400",   bg: "bg-slate-50" },
@@ -251,10 +268,9 @@ function KPI({ title, value, icon, tone = "slate" }) {
     amber:   { text: "text-amber-700",   border: "border-amber-400",   bg: "bg-amber-50" },
   };
   const th = toneMap[tone];
-
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 relative overflow-hidden transition-all duration-300 hover:shadow-lg">
-      <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.border.replace("border", "bg")}`} />
+      <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${th.border.replace('border', 'bg')}`} />
       <div className="pl-2 flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-slate-500 tracking-wide">{title}</p>
@@ -267,7 +283,6 @@ function KPI({ title, value, icon, tone = "slate" }) {
     </div>
   );
 }
-
 function Pill({ label, active, tone = "slate", onClick }) {
   const toneMap = {
     slate:   "border-slate-300 text-slate-800 data-[active=true]:bg-slate-700 data-[active=true]:text-white data-[active=true]:border-slate-700",
@@ -285,7 +300,6 @@ function Pill({ label, active, tone = "slate", onClick }) {
     </button>
   );
 }
-
 function Th({ children, className = "" }) {
   return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>;
 }

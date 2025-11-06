@@ -2,42 +2,45 @@ import React, { useMemo, useState, useEffect } from "react";
 import { CircleAlert, CalendarDays, UserRound, Home, Coins, Droplet, Zap } from "lucide-react";
 
 const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const arr = (d) =>
+  Array.isArray(d) ? d :
+  Array.isArray(d?.rows) ? d.rows :
+  Array.isArray(d?.data) ? d.data :
+  Array.isArray(d?.items) ? d.items :
+  Array.isArray(d?.result) ? d.result : [];
 
+/**
+ * props:
+ *  - data: array หรือ object ที่มี rows/data/items/result
+ *  - asOf: 'YYYY-MM-DD'
+ *  - setAsOf: fn
+ */
 export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
-  const items = Array.isArray(data) ? data : [];
+  const items = arr(data);
 
   const PAGE_SIZE = 5;
   const [page, setPage] = useState(1);
-
   useEffect(() => { setPage(1); }, [asOf, items.length]);
 
-  const totalPages = useMemo(() => {
-    const need = Math.ceil(Math.max(items.length, 1) / PAGE_SIZE);
-    return Math.max(1, Math.min(10, need));
-  }, [items.length]);
-
+  const totalPages = useMemo(() => Math.max(1, Math.min(10, Math.ceil(Math.max(items.length, 1) / PAGE_SIZE))), [items.length]);
   const start = (page - 1) * PAGE_SIZE;
   const end = start + PAGE_SIZE;
   const pageRows = items.slice(start, end);
 
-  const goto = (p) => { if (p < 1 || p > totalPages) return; setPage(p); };
+  const goto = (p) => { if (p >= 1 && p <= totalPages) setPage(p); };
 
-  const sum = useMemo(() => {
-    return items.reduce(
-      (acc, r = {}) => {
-        acc.rent  += Number(r.rent_amount || 0);
-        acc.water += Number(r.water_amount || 0);
-        acc.elec  += Number(r.electric_amount || 0);
-        acc.total += Number(r.total_amount ?? r.amount ?? 0);
-        return acc;
-      },
-      { rent: 0, water: 0, elec: 0, total: 0 }
-    );
-  }, [items]);
+  const sum = useMemo(() => items.reduce(
+    (acc, r) => {
+      acc.rent  += Number(r.rent_amount || 0);
+      acc.water += Number(r.water_amount || 0);
+      acc.elec  += Number(r.electric_amount || 0);
+      acc.total += Number(r.total_amount ?? r.amount ?? 0);
+      return acc;
+    }, { rent: 0, water: 0, elec: 0, total: 0 }
+  ), [items]);
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -55,16 +58,13 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
             <CalendarDays className="w-5 h-5 text-slate-500" />
             <span className="text-sm text-slate-700">ณ วันที่</span>
             <input
-              type="date"
-              value={asOf || ""}
-              onChange={(e) => setAsOf?.(e.target.value)}
+              type="date" value={asOf || ""} onChange={(e) => setAsOf?.(e.target.value)}
               className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
             />
           </label>
         </div>
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -89,36 +89,21 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
                   </td>
                 </tr>
               ) : (
-                pageRows.map((x = {}, i) => {
-                  const room = x.roomNo ?? x.room_number ?? x.room_id ?? "-";
-                  const tenant = x.tenant ?? x.tenant_name ?? "-";
-                  const invNo = x.invoiceNo ?? x.invoice_no ?? "-";
+                pageRows.map((x, i) => {
+                  const room = x.roomNo || x.room_number || x.room_id || "-";
+                  const tenant = x.tenant || x.tenant_name || "-";
+                  const invNo = x.invoiceNo || x.invoice_no || "-";
                   const overdue = x.daysOverdue ?? x.days_overdue ?? "-";
                   return (
-                    <tr key={`${invNo}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <Home className="w-4 h-4 text-slate-400" />
-                          <span className="font-semibold text-slate-900">{room}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-slate-800">
-                          <UserRound className="w-4 h-4 text-slate-400" />
-                          <span>{tenant}</span>
-                        </div>
-                      </td>
+                    <tr key={invNo !== "-" ? invNo : `${i}-${room}`} className="hover:bg-indigo-50/30 transition-colors">
+                      <td className="px-6 py-4"><div className="flex items-center gap-2"><Home className="w-4 h-4 text-slate-400" /><span className="font-semibold text-slate-900">{room}</span></div></td>
+                      <td className="px-6 py-4"><div className="flex items-center gap-2 text-slate-800"><UserRound className="w-4 h-4 text-slate-400" /><span>{tenant}</span></div></td>
                       <TdRight>{thb(x.rent_amount)}</TdRight>
                       <TdRight><span className="inline-flex items-center gap-1"><Droplet className="w-4 h-4" />{thb(x.water_amount)}</span></TdRight>
                       <TdRight><span className="inline-flex items-center gap-1"><Zap className="w-4 h-4" />{thb(x.electric_amount)}</span></TdRight>
                       <TdRight className="font-bold text-slate-900">{thb(x.total_amount ?? x.amount)}</TdRight>
                       <td className="px-6 py-4 text-center">{overdue}</td>
-                      <td className="px-6 py-4">
-                        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-slate-300 text-slate-800 bg-white">
-                          <Coins className="w-4 h-4 text-slate-500" />
-                          <span className="font-medium">{invNo}</span>
-                        </div>
-                      </td>
+                      <td className="px-6 py-4"><div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-slate-300 text-slate-800 bg-white"><Coins className="w-4 h-4 text-slate-500" /><span className="font-medium">{invNo}</span></div></td>
                     </tr>
                   );
                 })
@@ -140,20 +125,21 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
           </table>
         </div>
 
-        {/* Pagination bar */}
         <div className="px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-slate-600">
-            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ |
-            หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> |
-            แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
+            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ | หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> | แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
           </p>
 
           <div className="flex items-center gap-2">
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50" disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
-            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value) || 1)}>
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
+              disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
+
+            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value))}>
               {Array.from({ length: totalPages }).map((_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
             </select>
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50" disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
+
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
+              disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
           </div>
         </div>
       </div>
@@ -161,9 +147,5 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
   );
 }
 
-function Th({ children, className = "" }) {
-  return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>;
-}
-function TdRight({ children, className = "" }) {
-  return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>;
-}
+function Th({ children, className = "" }) { return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>; }
+function TdRight({ children, className = "" }) { return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>; }
