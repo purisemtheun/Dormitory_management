@@ -1,7 +1,11 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { reportApi } from "../../api/reports.api";
-import { Droplet, Zap } from "lucide-react";
+// รายงานค่าน้ำ/ค่าไฟ — เวอร์ชันบันทึกเฉพาะในหน้า (ไม่เรียก API)
+// ข้อมูลจะอยู่ในหน้านี้แม้เปลี่ยนหน้า pagination
+// ธีมเหมือนหน้ารายงานอื่น ๆ
 
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { Droplet, Zap, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+
+/* ===== helpers ===== */
 const arr = (d) =>
   Array.isArray(d) ? d :
   Array.isArray(d?.rows) ? d.rows :
@@ -12,7 +16,8 @@ const arr = (d) =>
 const val = (v, d = 0) => (v === null || v === undefined || v === "" ? d : v);
 const num = (v) => Number(val(v, 0)) || 0;
 
-const roomLabel = (r) => String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
+const roomLabel = (r) =>
+  String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
 
 const monthLabel = (ym) => {
   if (!ym) return "-";
@@ -22,7 +27,14 @@ const monthLabel = (ym) => {
 };
 
 const tenantNameOf = (r = {}) => {
-  const name = r.tenant_name ?? r.tenant ?? r.fullname ?? r.name ?? r.tenantName ?? r.tenant_fullname ?? "";
+  const name =
+    r.tenant_name ??
+    r.tenant ??
+    r.fullname ??
+    r.name ??
+    r.tenantName ??
+    r.tenant_fullname ??
+    "";
   const s = String(name || "").trim();
   return s.length ? s : "-";
 };
@@ -30,89 +42,71 @@ const tenantNameOf = (r = {}) => {
 export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
   const [rows, setRows] = useState([]);
   const [savingId, setSavingId] = useState(null);
+  const [savedIds, setSavedIds] = useState(() => new Set()); // ใช้โชว์ “บันทึกแล้ว” ต่อแถว
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
 
-  const getMonthlyFn =
-    reportApi?.getMeterMonthlySimple ||
-    reportApi?.meterMonthlySimple ||
-    reportApi?.meterMonthly ||
-    reportApi?.getMeterMonthly;
-
-  const saveFn =
-    reportApi?.meterSaveSimple ||
-    reportApi?.saveMeterSimple ||
-    reportApi?.meterSaveReading;
-
-  const fetchMonth = useCallback(async () => {
-    if (!period || !getMonthlyFn) return;
-    try {
-      setLoading(true);
-      const res = (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
-      const next = arr(res);
-      setRows(next);
-      setPage(1);
-    } catch (e) {
-      console.error(e);
-      setMsg(`โหลดข้อมูลล้มเหลว: ${e?.message || "กรุณาลองอีกครั้ง"}`);
-      setTimeout(() => setMsg(""), 2200);
-    } finally {
-      setLoading(false);
-    }
-  }, [getMonthlyFn, period]);
-
+  /* ===== โหลดข้อมูลเริ่มต้น ===== */
   useEffect(() => setRows(arr(data)), [data]);
 
-  const summary = useMemo(() => rows.reduce(
-    (acc, r) => {
-      const wu = num(r.water_units);
-      const eu = num(r.electric_units);
-      const wr = num(r.water_rate);
-      const er = num(r.electric_rate);
-      acc.waterUnits += wu;
-      acc.elecUnits += eu;
-      acc.waterAmount += wu * wr;
-      acc.elecAmount += eu * er;
-      return acc;
-    }, { waterUnits: 0, elecUnits: 0, waterAmount: 0, elecAmount: 0 }
-  ), [rows]);
+  /* ===== สรุปยอด ===== */
+  const summary = useMemo(
+    () =>
+      rows.reduce(
+        (acc, r) => {
+          const wu = num(r.water_units);
+          const eu = num(r.electric_units);
+          const wr = num(r.water_rate);
+          const er = num(r.electric_rate);
+          acc.waterUnits += wu;
+          acc.elecUnits += eu;
+          acc.waterAmount += wu * wr;
+          acc.elecAmount += eu * er;
+          return acc;
+        },
+        { waterUnits: 0, elecUnits: 0, waterAmount: 0, elecAmount: 0 }
+      ),
+    [rows]
+  );
 
-  const updateLocal = (id, patch) => setRows((prev) => prev.map((r) => (r.room_id === id ? { ...r, ...patch } : r)));
+  /* ===== อัปเดตท้องถิ่น ===== */
+  const updateLocal = (id, patch) =>
+    setRows((prev) => prev.map((r) => (r.room_id === id ? { ...r, ...patch } : r)));
 
+  /* ===== บันทึกหนึ่งแถว (เฉพาะในหน้าเท่านั้น) ===== */
   const saveRow = async (r) => {
     try {
-      if (!saveFn) {
-        setMsg("ไม่พบเมธอด reportApi สำหรับบันทึก (meterSaveSimple)");
-        setTimeout(() => setMsg(""), 2200);
-        return;
-      }
       setSavingId(r.room_id);
       setMsg("");
 
-      const payload = {
-        room_id: r.room_id,
-        period_ym: period,
-        water_units: num(r.water_units),
-        electric_units: num(r.electric_units),
-        water_rate: num(r.water_rate),
-        electric_rate: num(r.electric_rate),
-      };
+      // ✅ เก็บข้อมูลใน rows ทันที (จำในหน้านี้)
+      setRows((prev) =>
+        prev.map((item) =>
+          item.room_id === r.room_id ? { ...item, _saved: true } : item
+        )
+      );
 
-      await saveFn(payload);
-      await fetchMonth();
-
+      // ✅ ป้าย “บันทึกแล้ว”
+      setSavedIds((prev) => new Set(prev).add(r.room_id));
       setMsg("บันทึกแล้ว");
-      setTimeout(() => setMsg(""), 1600);
+      clearMsgLater(1600);
     } catch (e) {
-      setMsg(`บันทึกล้มเหลว: ${e.message || "กรุณาลองอีกครั้ง"}`);
+      setMsg("บันทึกล้มเหลว: " + (e?.message || "ไม่ทราบสาเหตุ"));
+      clearMsgLater();
     } finally {
       setSavingId(null);
     }
   };
 
+  const clearMsgLater = (ms = 2200) => {
+    window.clearTimeout(clearMsgLater._t);
+    clearMsgLater._t = window.setTimeout(() => setMsg(""), ms);
+  };
+
+  /* ===== page ===== */
   const total = rows.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const startIdx = (page - 1) * pageSize;
@@ -134,17 +128,26 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
             </span>
             <div>
               <h2 className="text-2xl font-bold text-slate-900">รายงานค่าน้ำ/ค่าไฟ</h2>
-              <p className="text-slate-600 text-sm mt-0.5">ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • โหลดข้อมูลเดือนล่าสุด</p>
+              <p className="text-slate-600 text-sm mt-0.5">
+                ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • เก็บเฉพาะในหน้า
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium text-slate-700">เลือกงวด:</label>
-            <input type="month" value={period || ""} onChange={handleMonthChange}
-                   className="w-[180px] rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" />
-            <button className="rounded-lg bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-60"
-                    onClick={fetchMonth} disabled={!period || loading} title="โหลดข้อมูลล่าสุดของเดือนนี้จากเซิร์ฟเวอร์">
-              {loading ? "กำลังโหลด…" : "โหลดใหม่"}
+            <input
+              type="month"
+              value={period || ""}
+              onChange={handleMonthChange}
+              className="w-[180px] rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+            />
+            <button
+              className="rounded-lg bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-60 inline-flex items-center gap-2"
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              โหลดใหม่
             </button>
           </div>
         </div>
@@ -155,22 +158,46 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
         <div className="font-semibold">สรุปยอด {monthLabel(period)}</div>
         <div className="mt-1 text-sm sm:text-base">
           หน่วยน้ำรวม: <b>{summary.waterUnits.toLocaleString()}</b> หน่วย (
-          <b>{summary.waterAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
+          <b>
+            {summary.waterAmount.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </b>{" "}
+          บาท)
           <span className="px-2 text-amber-400">•</span>
           หน่วยไฟรวม: <b>{summary.elecUnits.toLocaleString()}</b> หน่วย (
-          <b>{summary.elecAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
+          <b>
+            {summary.elecAmount.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </b>{" "}
+          บาท)
         </div>
       </div>
 
       {/* Table card */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
-          <div className="text-sm text-slate-600">แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว</div>
+          <div className="text-sm text-slate-600">
+            แสดงผล <b>{pageRows.length}</b> จากทั้งหมด <b>{total}</b> แถว
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-700">แถว/หน้า</span>
-            <select className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value) || 5); setPage(1); }}>
-              {[5, 10, 15, 20].map((n) => (<option key={n} value={n}>{n}</option>))}
+            <select
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value) || 5);
+                setPage(1);
+              }}
+            >
+              {[5, 10, 15, 20].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -189,7 +216,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                 <th className="px-4 py-3 text-center w-36">เรตไฟ (บ./หน่วย)</th>
                 <th className="px-4 py-3 text-right w-32">ค่าไฟ (บ.)</th>
                 <th className="px-4 py-3 text-right w-32">รวม (บ.)</th>
-                <th className="px-4 py-3 text-center w-24">บันทึก</th>
+                <th className="px-4 py-3 text-center w-28">บันทึก</th>
               </tr>
             </thead>
 
@@ -203,35 +230,110 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                   const wAmt = wu * wr;
                   const eAmt = eu * er;
                   const totalAmt = wAmt + eAmt;
+                  const uniqueKey = `${period}|${r.room_id ?? roomLabel(r)}|${startIdx + idx}`;
+                  const isSaved = savedIds.has(r.room_id);
 
                   return (
-                    <tr key={r.room_id ?? `${idx}-${roomLabel(r)}`} className="hover:bg-slate-50/60 text-[15px]">
+                    <tr key={uniqueKey} className="hover:bg-slate-50/60 text-[15px]">
                       <td className="px-4 py-3">{startIdx + idx + 1}</td>
                       <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
-                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">{tenantNameOf(r)}</td>
+                      <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">
+                        {tenantNameOf(r)}
+                      </td>
 
-                      <td className="px-4 py-2"><input type="number" step="1" value={r.water_units ?? ""} onChange={(e) => updateLocal(r.room_id, { water_units: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
-                      <td className="px-4 py-2"><input type="number" step="0.01" value={r.water_rate ?? ""}  onChange={(e) => updateLocal(r.room_id, { water_rate: e.target.value })}  className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
-                      <td className="px-4 py-3 text-right font-medium">{wAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1"
+                          value={r.water_units ?? ""}
+                          onChange={(e) => updateLocal(r.room_id, { water_units: e.target.value })}
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={r.water_rate ?? ""}
+                          onChange={(e) => updateLocal(r.room_id, { water_rate: e.target.value })}
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">
+                        {wAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
 
-                      <td className="px-4 py-2"><input type="number" step="1" value={r.electric_units ?? ""} onChange={(e) => updateLocal(r.room_id, { electric_units: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
-                      <td className="px-4 py-2"><input type="number" step="0.01" value={r.electric_rate ?? ""} onChange={(e) => updateLocal(r.room_id, { electric_rate: e.target.value })} className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100" /></td>
-                      <td className="px-4 py-3 text-right font-medium">{eAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1"
+                          value={r.electric_units ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { electric_units: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={r.electric_rate ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.room_id, { electric_rate: e.target.value })
+                          }
+                          className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">
+                        {eAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
 
-                      <td className="px-4 py-3 text-right font-bold">{totalAmt.toLocaleString(undefined,{ minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right font-bold">
+                        {totalAmt.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
 
                       <td className="px-4 py-2 text-center">
-                        <button className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-60"
-                                disabled={savingId === r.room_id || loading} onClick={() => saveRow(r)}>
-                          {savingId === r.room_id ? "กำลังบันทึก…" : "บันทึก"}
-                        </button>
+                        {isSaved ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs bg-emerald-50 text-emerald-700 border-emerald-300">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            บันทึกแล้ว
+                          </span>
+                        ) : (
+                          <button
+                            className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-60 inline-flex items-center gap-2"
+                            disabled={savingId === r.room_id || loading}
+                            onClick={() => saveRow(r)}
+                          >
+                            {savingId === r.room_id ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                กำลังบันทึก…
+                              </>
+                            ) : (
+                              "บันทึก"
+                            )}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={11} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
+                  <td
+                    colSpan={11}
+                    className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50"
+                  >
                     ไม่พบข้อมูลค่าน้ำ/ค่าไฟสำหรับงวด {period || "-"}
                   </td>
                 </tr>
@@ -241,18 +343,41 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
         </div>
 
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
-          <div className="text-sm text-slate-600">หน้า <b>{page}</b> / {totalPages}</div>
+          <div className="text-sm text-slate-600">
+            หน้า <b>{page}</b> / {totalPages}
+          </div>
           <div className="flex items-center gap-2">
-            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>ก่อนหน้า</button>
-            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>ถัดไป</button>
+            <button
+              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              ก่อนหน้า
+            </button>
+            <button
+              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              ถัดไป
+            </button>
           </div>
         </div>
       </div>
 
       {msg && (
-        <div className={`rounded-xl border px-4 py-3 ${msg.startsWith("บันทึกแล้ว") ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+        <div
+          className={`rounded-xl border px-4 py-3 flex items-center gap-2 ${
+            msg.startsWith("บันทึกแล้ว")
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-rose-200 bg-rose-50 text-rose-900"
+          }`}
+        >
+          {msg.startsWith("บันทึกแล้ว") ? (
+            <CheckCircle2 className="w-5 h-5" />
+          ) : (
+            <AlertCircle className="w-5 h-5" />
+          )}
           {msg}
         </div>
       )}

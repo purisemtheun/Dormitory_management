@@ -1,28 +1,21 @@
-const express = require('express');
-const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware');
-const ctrl = require('../controllers/reports.controller.js');
+// backend/routes/reports.routes.js
+const router = require('express').Router();
+const reports = require('../controllers/reports.controller');
 
-const router = express.Router();
-router.use(verifyToken, authorizeRoles('admin', 'staff'));
+// ===== Rooms / Status =====
+router.get('/rooms-status', reports.getRoomsStatus);
 
-router.get('/rooms-status', ctrl.getRoomsStatus);
+// ===== Revenue =====
+router.get('/monthly-summary', reports.monthlySummary);
+router.get('/revenue-daily', reports.getRevenueDaily);
 
-/* รายรับ */
-router.get('/revenue',        ctrl.getRevenue);       // เดิม (รองรับ granularity=daily)
-router.get('/revenue-daily',  ctrl.getRevenueDaily);  // ✅ ใหม่: เรียกตรงสำหรับรายวัน
+// ===== Payments & Debts =====
+router.get('/payments', reports.getPayments);
+router.get('/debts', reports.getDebts);
 
-/* การชำระ/หนี้ */
-router.get('/payments',       ctrl.getPayments);
-router.get('/debts',          ctrl.getDebts);
-
-/* Utilities (ค่าน้ำ/ไฟ) */
-router.get('/meter-monthly',      ctrl.getMeterMonthlySimple);
-router.post('/meter/save-simple', ctrl.saveMeterSimple);
-router.post('/meter-reading',     ctrl.saveMeterSimple); // alias เดิม
-router.post('/meter/toggle-lock', ctrl.toggleMeterLock);
-
-/* รายเดือนรวมทั้งหอ + แตกห้อง */
-router.get('/monthly-summary',       ctrl.monthlySummary);
-router.get('/monthly-breakdown/:ym', ctrl.monthlyBreakdown);
+// ===== Utilities (water/electric) =====
+router.get('/meter-monthly', reports.getMeterMonthlySimple);
+router.post('/meter/save-simple', reports.saveMeterSimple);
+router.post('/meter/toggle-lock', reports.toggleMeterLock);
 
 module.exports = router;

@@ -471,3 +471,29 @@ exports.monthlyBreakdown = async (req, res, next) => {
     } catch (e2) { next(err); }
   }
 };
+
+exports.getRoomsStatus = async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        r.room_id,
+        r.room_number,
+        r.room_number AS roomNo,  -- alias เดิมให้อยู่ได้
+        CASE
+          WHEN t.tenant_id IS NULL THEN 'VACANT'
+          WHEN EXISTS (
+            SELECT 1 FROM invoices i
+            WHERE i.room_id = r.room_id
+              AND UPPER(i.status) IN ('UNPAID','OVERDUE')
+          ) THEN 'OVERDUE'
+          ELSE 'OCCUPIED'
+        END AS status,
+        COALESCE(u.name, u.fullname) AS tenant
+      FROM rooms r
+      LEFT JOIN tenants t ON t.room_id = r.room_id AND COALESCE(t.is_deleted,0) = 0
+      LEFT JOIN users   u ON u.id = t.user_id
+      ORDER BY r.room_number+0, r.room_number
+    `);
+    res.json(Array.isArray(rows) ? rows : []);
+  } catch (err) { next(err); }
+};

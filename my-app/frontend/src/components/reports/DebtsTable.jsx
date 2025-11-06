@@ -1,151 +1,126 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { CircleAlert, CalendarDays, UserRound, Home, Coins, Droplet, Zap } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import reportApi from "../../api/reports.api";
+import { CalendarDays, AlertTriangle, RefreshCw, FileWarning } from "lucide-react";
 
-const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const arr = (d) =>
-  Array.isArray(d) ? d :
-  Array.isArray(d?.rows) ? d.rows :
-  Array.isArray(d?.data) ? d.data :
-  Array.isArray(d?.items) ? d.items :
-  Array.isArray(d?.result) ? d.result : [];
+const todayStr = () => new Date().toISOString().slice(0,10);
 
-/**
- * props:
- *  - data: array หรือ object ที่มี rows/data/items/result
- *  - asOf: 'YYYY-MM-DD'
- *  - setAsOf: fn
- */
-export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
-  const items = arr(data);
+export default function DebtsPanel() {
+  const [asOf, setAsOf] = useState(todayStr());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const PAGE_SIZE = 5;
-  const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [asOf, items.length]);
+  const load = async () => {
+    try {
+      setLoading(true);
+      const resp = await reportApi.debts(asOf);
+      const data = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
+      setRows(data);
+    } catch (e) { console.error(e); setRows([]); }
+    finally { setLoading(false); }
+  };
 
-  const totalPages = useMemo(() => Math.max(1, Math.min(10, Math.ceil(Math.max(items.length, 1) / PAGE_SIZE))), [items.length]);
-  const start = (page - 1) * PAGE_SIZE;
-  const end = start + PAGE_SIZE;
-  const pageRows = items.slice(start, end);
+  useEffect(() => { load(); }, []);
 
-  const goto = (p) => { if (p >= 1 && p <= totalPages) setPage(p); };
-
-  const sum = useMemo(() => items.reduce(
-    (acc, r) => {
-      acc.rent  += Number(r.rent_amount || 0);
-      acc.water += Number(r.water_amount || 0);
-      acc.elec  += Number(r.electric_amount || 0);
-      acc.total += Number(r.total_amount ?? r.amount ?? 0);
-      return acc;
-    }, { rent: 0, water: 0, elec: 0, total: 0 }
-  ), [items]);
+  const total = rows.reduce((s,r)=> s + Number(r.total_amount||0), 0);
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full border border-indigo-300 bg-indigo-50 flex items-center justify-center">
-              <CircleAlert className="w-6 h-6 text-indigo-700" />
-            </div>
+            <span className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 inline-flex items-center justify-center">
+              <FileWarning className="w-6 h-6 text-amber-600" />
+            </span>
             <div>
-              <h3 className="text-2xl font-bold text-slate-900">รายงานหนี้ค้างชำระ (แยกหมวด)</h3>
-              <p className="text-slate-600 text-sm mt-0.5">แสดงยอดค้างที่ยังไม่ชำระ โดยแยก <b>ค่าเช่า / ค่าน้ำ / ค่าไฟ</b> และยอดรวมต่อใบแจ้งหนี้</p>
-              <p className="text-rose-600 text-xs mt-1">* ค้างชำระได้ไม่เกิน <b>2 เดือน</b> หรือ <b>60 วัน</b></p>
+              <h2 className="text-xl font-bold text-slate-800">รายงานหนี้ค้างชำระ (แยกหมวด)</h2>
+              <p className="text-slate-500 text-sm">ภาพรวมยอดค้าง ณ วันที่กำหนด</p>
             </div>
           </div>
-
-          <label className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-2">
-            <CalendarDays className="w-5 h-5 text-slate-500" />
-            <span className="text-sm text-slate-700">ณ วันที่</span>
-            <input
-              type="date" value={asOf || ""} onChange={(e) => setAsOf?.(e.target.value)}
-              className="w-[10.5rem] pl-2 pr-2 py-1.5 border-0 focus:ring-0 focus:outline-none text-slate-900"
-            />
-          </label>
+          <button
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+            onClick={load}
+            disabled={loading}
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            โหลดใหม่
+          </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="sticky top-0 z-10 bg-indigo-900 text-white shadow-md">
-                <Th className="text-left">ห้อง</Th>
-                <Th className="text-left">ผู้เช่า</Th>
-                <Th className="text-right">ค่าเช่า (฿)</Th>
-                <Th className="text-right">ค่าน้ำ (฿)</Th>
-                <Th className="text-right">ค่าไฟ (฿)</Th>
-                <Th className="text-right">รวมทั้งหมด (฿)</Th>
-                <Th className="text-center">เกินกำหนด (วัน)</Th>
-                <Th className="text-left">เลขที่ใบแจ้งหนี้</Th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-slate-100">
-              {pageRows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
-                    ไม่มีข้อมูลหนี้ค้างชำระ
-                  </td>
-                </tr>
-              ) : (
-                pageRows.map((x, i) => {
-                  const room = x.roomNo || x.room_number || x.room_id || "-";
-                  const tenant = x.tenant || x.tenant_name || "-";
-                  const invNo = x.invoiceNo || x.invoice_no || "-";
-                  const overdue = x.daysOverdue ?? x.days_overdue ?? "-";
-                  return (
-                    <tr key={invNo !== "-" ? invNo : `${i}-${room}`} className="hover:bg-indigo-50/30 transition-colors">
-                      <td className="px-6 py-4"><div className="flex items-center gap-2"><Home className="w-4 h-4 text-slate-400" /><span className="font-semibold text-slate-900">{room}</span></div></td>
-                      <td className="px-6 py-4"><div className="flex items-center gap-2 text-slate-800"><UserRound className="w-4 h-4 text-slate-400" /><span>{tenant}</span></div></td>
-                      <TdRight>{thb(x.rent_amount)}</TdRight>
-                      <TdRight><span className="inline-flex items-center gap-1"><Droplet className="w-4 h-4" />{thb(x.water_amount)}</span></TdRight>
-                      <TdRight><span className="inline-flex items-center gap-1"><Zap className="w-4 h-4" />{thb(x.electric_amount)}</span></TdRight>
-                      <TdRight className="font-bold text-slate-900">{thb(x.total_amount ?? x.amount)}</TdRight>
-                      <td className="px-6 py-4 text-center">{overdue}</td>
-                      <td className="px-6 py-4"><div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-slate-300 text-slate-800 bg-white"><Coins className="w-4 h-4 text-slate-500" /><span className="font-medium">{invNo}</span></div></td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-
-            {items.length > 0 && (
-              <tfoot>
-                <tr className="bg-indigo-50 border-t border-indigo-100">
-                  <td className="px-6 py-3 font-semibold text-slate-900" colSpan={2}>รวมทั้งสิ้น</td>
-                  <TdRight className="font-semibold">{thb(sum.rent)}</TdRight>
-                  <TdRight className="font-semibold">{thb(sum.water)}</TdRight>
-                  <TdRight className="font-semibold">{thb(sum.elec)}</TdRight>
-                  <TdRight className="font-bold text-slate-900">{thb(sum.total)}</TdRight>
-                  <td className="px-6 py-3" colSpan={2}></td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-
-        <div className="px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-slate-600">
-            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ | หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> | แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
-          </p>
-
-          <div className="flex items-center gap-2">
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
-
-            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value))}>
-              {Array.from({ length: totalPages }).map((_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
-            </select>
-
-            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-end gap-3">
+        <div>
+          <label className="block text-sm text-slate-600 mb-1">ณ วันที่</label>
+          <div className="relative">
+            <CalendarDays className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="date"
+              className="border rounded-lg pl-9 pr-3 py-2"
+              value={asOf}
+              onChange={e=>setAsOf(e.target.value)}
+            />
           </div>
         </div>
+        <button className="px-4 py-2 rounded-lg bg-indigo-600 text-white" onClick={load}>โหลด</button>
+        <div className="ml-auto">
+          <p className="text-slate-600 text-sm">รวมทั้งหมด</p>
+          <p className="text-2xl font-extrabold">฿ {total.toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="bg-indigo-700">
+              <Th>ห้อง</Th><Th>ผู้เช่า</Th><Th>ค่าเช่า (฿)</Th><Th>ค่าน้ำ (฿)</Th><Th>ค่าไฟ (฿)</Th><Th>รวม (฿)</Th><Th>เกินกำหนด (วัน)</Th><Th>เลขบิล</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? (
+              <SkeletonRows cols={8} rows={7} />
+            ) : rows.length ? rows.map((r,i)=>(
+              <tr key={`${r.invoiceNo}-${i}`}>
+                <Td>{r.roomNo}</Td>
+                <Td>{r.tenant}</Td>
+                <Td>{fmt(r.rent_amount)}</Td>
+                <Td>{fmt(r.water_amount)}</Td>
+                <Td>{fmt(r.electric_amount)}</Td>
+                <Td className="font-semibold">{fmt(r.total_amount)}</Td>
+                <Td className={Number(r.daysOverdue)>0 ? "text-amber-600 font-medium" : ""}>
+                  {r.daysOverdue}
+                </Td>
+                <Td>{r.invoiceNo}</Td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={8} className="px-6 py-10 text-center text-slate-500">
+                  <div className="inline-flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5" />
+                    ไม่มีข้อมูล
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
-
-function Th({ children, className = "" }) { return <th className={`px-6 py-3.5 text-base font-semibold ${className}`}>{children}</th>; }
-function TdRight({ children, className = "" }) { return <td className={`px-6 py-4 text-right text-slate-800 ${className}`}>{children}</td>; }
+function Th({children}){ return <th className="px-6 py-3 text-left text-sm font-semibold text-white">{children}</th>; }
+function Td({children}){ return <td className="px-6 py-3">{children}</td>; }
+function fmt(v){ const n = Number(v||0); return `฿ ${n.toLocaleString()}`; }
+function SkeletonRows({cols=5, rows=6}) {
+  return (
+    <>
+      {Array.from({length: rows}).map((_,ri)=>(
+        <tr key={ri}>
+          {Array.from({length: cols}).map((__,ci)=>(
+            <td key={ci} className="px-6 py-3">
+              <div className="h-4 w-28 bg-slate-200 rounded animate-pulse" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
