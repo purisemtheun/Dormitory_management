@@ -1,4 +1,3 @@
-// src/components/reports/UtilitiesTable.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { reportApi } from "../../api/reports.api";
 import { Droplet, Zap } from "lucide-react";
@@ -7,26 +6,31 @@ import { Droplet, Zap } from "lucide-react";
 const val = (v, d = 0) => (v === null || v === undefined || v === "" ? d : v);
 const num = (v) => Number(val(v, 0)) || 0;
 
-const roomLabel = (r) =>
+const asArray = (input) => {
+  if (Array.isArray(input)) return input;
+  if (input?.data && Array.isArray(input.data)) return input.data;
+  if (input?.rows && Array.isArray(input.rows)) return input.rows;
+  if (input?.items && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  console.warn("[UtilitiesTable] non-array data received:", input);
+  return [];
+};
+
+const roomLabel = (r = {}) =>
   String(r.room_number ?? r.roomNumber ?? r.room_no ?? r.number ?? r.room ?? "-");
 
 const monthLabel = (ym) => {
   if (!ym) return "-";
-  const [y, m] = ym.split("-");
+  const [y, m] = String(ym).split("-");
   const dt = new Date(`${y}-${m}-01T00:00:00`);
+  if (Number.isNaN(+dt)) return String(ym);
   return dt.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
 };
 
 // ✅ ฟังก์ชันรวม fallback ของ "ชื่อผู้เช่า" ให้แน่นอน
 const tenantNameOf = (r = {}) => {
   const name =
-    r.tenant_name ??
-    r.tenant ??
-    r.fullname ??
-    r.name ??
-    r.tenantName ??
-    r.tenant_fullname ??
-    "";
+    r.tenant_name ?? r.tenant ?? r.fullname ?? r.name ?? r.tenantName ?? r.tenant_fullname ?? "";
   const s = String(name || "").trim();
   return s.length ? s : "-";
 };
@@ -61,7 +65,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
       setLoading(true);
       const res =
         (getMonthlyFn.length > 1 ? await getMonthlyFn({ ym: period }) : await getMonthlyFn(period)) || [];
-      const next = Array.isArray(res) ? res : res?.data ?? [];
+      const next = asArray(res);
       setRows(next);
       setPage(1); // กลับไปหน้าแรกทุกครั้งที่โหลดใหม่
     } catch (e) {
@@ -73,12 +77,12 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
     }
   }, [getMonthlyFn, period]);
 
-  useEffect(() => setRows(Array.isArray(data) ? data : []), [data]);
+  useEffect(() => setRows(asArray(data)), [data]);
 
   // --------- summary ----------
   const summary = useMemo(() => {
     return rows.reduce(
-      (acc, r) => {
+      (acc, r = {}) => {
         const wu = num(r.water_units);
         const eu = num(r.electric_units);
         const wr = num(r.water_rate);
@@ -99,7 +103,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
   };
 
   // --------- save one row ----------
-  const saveRow = async (r) => {
+  const saveRow = async (r = {}) => {
     try {
       if (!saveFn) {
         setMsg("ไม่พบเมธอด reportApi สำหรับบันทึก (meterSaveSimple)");
@@ -144,7 +148,6 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-3">
-            {/* ไอคอนวงกลม */}
             <span className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-indigo-50 border border-indigo-200">
               <div className="flex items-center gap-1.5">
                 <Droplet className="w-5 h-5 text-sky-600" />
@@ -153,9 +156,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
             </span>
             <div>
               <h2 className="text-2xl font-bold text-slate-900">รายงานค่าน้ำ/ค่าไฟ</h2>
-              <p className="text-slate-600 text-sm mt-0.5">
-                ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • โหลดข้อมูลเดือนล่าสุด
-              </p>
+              <p className="text-slate-600 text-sm mt-0.5">ป้อนหน่วยและเรตของแต่ละห้อง • บันทึกทีละแถว • โหลดข้อมูลเดือนล่าสุด</p>
             </div>
           </div>
 
@@ -184,22 +185,10 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
         <div className="font-semibold">สรุปยอด {monthLabel(period)}</div>
         <div className="mt-1 text-sm sm:text-base">
           หน่วยน้ำรวม: <b>{summary.waterUnits.toLocaleString()}</b> หน่วย (
-          <b>
-            {summary.waterAmount.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </b>{" "}
-          บาท)
+          <b>{summary.waterAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
           <span className="px-2 text-amber-400">•</span>
           หน่วยไฟรวม: <b>{summary.elecUnits.toLocaleString()}</b> หน่วย (
-          <b>
-            {summary.elecAmount.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </b>{" "}
-          บาท)
+          <b>{summary.elecAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> บาท)
         </div>
       </div>
 
@@ -221,9 +210,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
               }}
             >
               {[5, 10, 15, 20].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
+                <option key={n} value={n}>{n}</option>
               ))}
             </select>
           </div>
@@ -252,7 +239,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
 
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {pageRows.length ? (
-                pageRows.map((r, idx) => {
+                pageRows.map((r = {}, idx) => {
                   const wu = num(r.water_units);
                   const eu = num(r.electric_units);
                   const wr = num(r.water_rate);
@@ -262,11 +249,11 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                   const totalAmt = wAmt + eAmt;
 
                   return (
-                    <tr key={r.room_id} className="hover:bg-slate-50/60 text-[15px]">
+                    <tr key={r.room_id ?? `${idx}-${roomLabel(r)}`} className="hover:bg-slate-50/60 text-[15px]">
                       <td className="px-4 py-3">{startIdx + idx + 1}</td>
                       <td className="px-4 py-3 font-semibold">{roomLabel(r)}</td>
 
-                      {/* ✅ ชื่อผู้เช่า (รองรับหลายคีย์ + กันค่าว่าง) */}
+                      {/* ชื่อผู้เช่า */}
                       <td className="px-4 py-3 max-w-[220px] whitespace-nowrap overflow-hidden text-ellipsis">
                         {tenantNameOf(r)}
                       </td>
@@ -277,9 +264,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                           type="number"
                           step="1"
                           value={r.water_units ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { water_units: e.target.value })
-                          }
+                          onChange={(e) => updateLocal(r.room_id, { water_units: e.target.value })}
                           className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                         />
                       </td>
@@ -290,18 +275,13 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                           type="number"
                           step="0.01"
                           value={r.water_rate ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { water_rate: e.target.value })
-                          }
+                          onChange={(e) => updateLocal(r.room_id, { water_rate: e.target.value })}
                           className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                         />
                       </td>
 
                       <td className="px-4 py-3 text-right font-medium">
-                        {wAmt.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {wAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
                       {/* ELECTRIC UNIT */}
@@ -310,9 +290,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                           type="number"
                           step="1"
                           value={r.electric_units ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { electric_units: e.target.value })
-                          }
+                          onChange={(e) => updateLocal(r.room_id, { electric_units: e.target.value })}
                           className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                         />
                       </td>
@@ -323,25 +301,17 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                           type="number"
                           step="0.01"
                           value={r.electric_rate ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.room_id, { electric_rate: e.target.value })
-                          }
+                          onChange={(e) => updateLocal(r.room_id, { electric_rate: e.target.value })}
                           className="w-full text-center rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                         />
                       </td>
 
                       <td className="px-4 py-3 text-right font-medium">
-                        {eAmt.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {eAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
                       <td className="px-4 py-3 text-right font-bold">
-                        {totalAmt.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {totalAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
                       <td className="px-4 py-2 text-center">
@@ -358,10 +328,7 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
                 })
               ) : (
                 <tr>
-                  <td
-                    colSpan={11}
-                    className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50"
-                  >
+                  <td colSpan={11} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
                     ไม่พบข้อมูลค่าน้ำ/ค่าไฟสำหรับงวด {period || "-"}
                   </td>
                 </tr>
@@ -372,37 +339,21 @@ export default function UtilitiesTable({ data = [], period = "", setPeriod }) {
 
         {/* Pagination footer */}
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
-          <div className="text-sm text-slate-600">
-            หน้า <b>{page}</b> / {totalPages}
-          </div>
+          <div className="text-sm text-slate-600">หน้า <b>{page}</b> / {totalPages}</div>
           <div className="flex items-center gap-2">
-            <button
-              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-            >
-              ก่อนหน้า
-            </button>
-            <button
-              className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              ถัดไป
-            </button>
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>ก่อนหน้า</button>
+            <button className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>ถัดไป</button>
           </div>
         </div>
       </div>
 
       {/* Inline message */}
       {msg && (
-        <div
-          className={`rounded-xl border px-4 py-3 ${
-            msg.startsWith("บันทึกแล้ว")
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
+        <div className={`rounded-xl border px-4 py-3 ${
+          msg.startsWith("บันทึกแล้ว") ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                        : "border-rose-200 bg-rose-50 text-rose-900"}`}>
           {msg}
         </div>
       )}

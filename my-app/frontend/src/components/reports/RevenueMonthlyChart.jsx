@@ -1,6 +1,16 @@
-// src/components/reports/RevenueMonthlyChart.jsx
 import React, { useMemo } from "react";
 import { BarChart3, Coins, Droplet, Zap, CalendarRange, ChevronDown } from "lucide-react";
+
+/* ---------- Normalizers ---------- */
+const asArray = (input) => {
+  if (Array.isArray(input)) return input;
+  if (input?.data && Array.isArray(input.data)) return input.data;
+  if (input?.rows && Array.isArray(input.rows)) return input.rows;
+  if (input?.items && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  console.warn("[RevenueMonthlyChart] non-array data received:", input);
+  return [];
+};
 
 export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, onMonthClick }) {
   const num = (v) => Number(v ?? 0) || 0;
@@ -8,14 +18,14 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
     num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const ymLabel = (ym) => {
-    const [y, m] = String(ym).split("-");
+    const [y, m] = String(ym || "").split("-");
     const d = new Date(`${y}-${m}-01T00:00:00`);
+    if (Number.isNaN(+d)) return String(ym || "-");
     return d.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
   };
 
   // ---- Helper: คืน breakdown ต่อแถว โดยให้ collected มาก่อน
-  // ถ้า total_collected > 0 แต่ทั้งสาม collected เป็น 0 ให้ fallback ไป billed เพื่อแสดงค่าแยกประเภท
-  const toBreakdown = (row) => {
+  const toBreakdown = (row = {}) => {
     const billed = {
       rent:    num(row.rent_amount),
       water:   num(row.water_amount),
@@ -35,35 +45,26 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
       electric:num(row.electric_collected),
       total:   Object.prototype.hasOwnProperty.call(row, "total_collected")
                 ? num(row.total_collected)
-                : null, // null หมายถึงไม่มีค่ารวมแบบ collected
+                : null,
     };
 
-    // กรณีมี total_collected จริงและ > 0
     const useCollectedTotal = collected.total != null ? collected.total : billed.total;
 
-    // เงื่อนไข fallback แยกประเภท:
-    // - มีฟิลด์ collected อยู่จริง (hasCollectedKeys)
-    // - ทั้งสามประเภทเป็น 0
-    // - แต่ total_collected > 0 (แปลว่ามีเงินเข้าแล้ว เพียงแต่เราไม่ได้แจกแจงประเภท)
     const allCollectedZero = collected.rent === 0 && collected.water === 0 && collected.electric === 0;
     const shouldFallbackCategory = hasCollectedKeys && allCollectedZero && num(row.total_collected) > 0;
 
-    const rent    = shouldFallbackCategory ? billed.rent    : (hasCollectedKeys ? collected.rent    : billed.rent);
-    const water   = shouldFallbackCategory ? billed.water   : (hasCollectedKeys ? collected.water   : billed.water);
-    const electric= shouldFallbackCategory ? billed.electric: (hasCollectedKeys ? collected.electric: billed.electric);
+    const rent     = shouldFallbackCategory ? billed.rent     : (hasCollectedKeys ? collected.rent     : billed.rent);
+    const water    = shouldFallbackCategory ? billed.water    : (hasCollectedKeys ? collected.water    : billed.water);
+    const electric = shouldFallbackCategory ? billed.electric : (hasCollectedKeys ? collected.electric : billed.electric);
 
-    return {
-      rent,
-      water,
-      electric,
-      total: useCollectedTotal,
-      rooms: billed.rooms,
-    };
+    return { rent, water, electric, total: useCollectedTotal, rooms: billed.rooms };
   };
+
+  const safe = asArray(data);
 
   // ===== KPI =====
   const kpi = useMemo(() => {
-    const s = data.map(toBreakdown).reduce(
+    const s = safe.map(toBreakdown).reduce(
       (acc, r) => ({
         months: acc.months + 1,
         rent: acc.rent + r.rent,
@@ -74,7 +75,7 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
       { months: 0, rent: 0, water: 0, electric: 0, total: 0 }
     );
     return s;
-  }, [data]);
+  }, [safe]);
 
   return (
     <div className="space-y-6">
@@ -140,19 +141,19 @@ export default function RevenueMonthlyChart({ data = [], months = 6, setMonths, 
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {data.length === 0 ? (
+              {safe.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center text-lg text-slate-500 bg-slate-50/50">
                     ไม่มีข้อมูลในช่วงที่เลือก
                   </td>
                 </tr>
               ) : (
-                data.map((r, i) => {
+                safe.map((r, i) => {
                   const b = toBreakdown(r);
                   const period = r.period_ym ?? r.period ?? r.month;
                   return (
                     <tr
-                      key={i}
+                      key={period ?? i}
                       className="hover:bg-indigo-50/30 transition-colors cursor-pointer"
                       onClick={() => onMonthClick?.(period)}
                       title="คลิกเพื่อดูรายละเอียดเดือนนี้"

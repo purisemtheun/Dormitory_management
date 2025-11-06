@@ -1,8 +1,18 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { CircleAlert, CalendarDays, UserRound, Home, Coins, Droplet, Zap } from "lucide-react";
 
-const thb = (n) =>
-  Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const thb = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* normalize to array */
+const asArray = (input) => {
+  if (Array.isArray(input)) return input;
+  if (input?.data && Array.isArray(input.data)) return input.data;
+  if (input?.rows && Array.isArray(input.rows)) return input.rows;
+  if (input?.items && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  console.warn("[DebtsTable] non-array data received:", input);
+  return [];
+};
 
 /**
  * props:
@@ -11,13 +21,12 @@ const thb = (n) =>
  *  - setAsOf: fn(dateString) => void
  */
 export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
-  const items = Array.isArray(data) ? data : [];
+  const items = asArray(data);
 
   /* ========= Pagination (5 ต่อหน้า สูงสุด 10 หน้า) ========= */
   const PAGE_SIZE = 5;
   const [page, setPage] = useState(1);
 
-  // รีเซ็ตหน้าเมื่อข้อมูลหรือวันที่อ้างอิงเปลี่ยน
   useEffect(() => { setPage(1); }, [asOf, items.length]);
 
   const totalPages = useMemo(() => {
@@ -34,10 +43,9 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
     setPage(p);
   };
 
-  // รวมทั้ง dataset ทั้งหมด
   const sum = useMemo(() => {
     return items.reduce(
-      (acc, r) => {
+      (acc, r = {}) => {
         acc.rent  += Number(r.rent_amount || 0);
         acc.water += Number(r.water_amount || 0);
         acc.elec  += Number(r.electric_amount || 0);
@@ -106,7 +114,7 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
                   </td>
                 </tr>
               ) : (
-                pageRows.map((x, i) => {
+                pageRows.map((x = {}, i) => {
                   const room = x.roomNo || x.room_number || x.room_id || "-";
                   const tenant = x.tenant || x.tenant_name || "-";
                   const invNo = x.invoiceNo || x.invoice_no || "-";
@@ -171,39 +179,21 @@ export default function DebtsTable({ data = [], asOf = "", setAsOf }) {
         {/* Pagination bar */}
         <div className="px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-slate-600">
-            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ |
-            หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> |
-            แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
+            ทั้งหมด <span className="font-semibold">{items.length}</span> รายการ | หน้า <span className="font-semibold">{page}</span> / <span className="font-semibold">{totalPages}</span> | แสดง <span className="font-semibold">{PAGE_SIZE}</span> รายการ/หน้า
           </p>
 
           <div className="flex items-center gap-2">
-            <button
-              className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page <= 1}
-              onClick={() => goto(page - 1)}
-            >
-              ก่อนหน้า
-            </button>
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
+              disabled={page <= 1} onClick={() => goto(page - 1)}>ก่อนหน้า</button>
 
-            <select
-              className="px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              value={page}
-              onChange={(e) => goto(Number(e.target.value))}
-            >
+            <select className="px-3 py-2 text-sm border border-slate-300 rounded-lg" value={page} onChange={(e) => goto(Number(e.target.value))}>
               {Array.from({ length: totalPages }).map((_, i) => (
-                <option key={i + 1} value={i + 1}>
-                  {i + 1}
-                </option>
+                <option key={i + 1} value={i + 1}>{i + 1}</option>
               ))}
             </select>
 
-            <button
-              className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
-              disabled={page >= totalPages}
-              onClick={() => goto(page + 1)}
-            >
-              ถัดไป
-            </button>
+            <button className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-slate-700 font-medium disabled:opacity-50"
+              disabled={page >= totalPages} onClick={() => goto(page + 1)}>ถัดไป</button>
           </div>
         </div>
       </div>

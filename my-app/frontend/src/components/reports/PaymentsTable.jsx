@@ -1,23 +1,9 @@
-// src/components/reports/PaymentsTable.jsx
 import React, { useMemo, useState } from "react";
-import {
-  CalendarDays,
-  Search,
-  Receipt,
-  UserRound,
-  Home,
-  CheckCircle2,
-  Clock,
-  XCircle,
-  AlertTriangle,
-} from "lucide-react";
+import { CalendarDays, Search, Receipt, UserRound, Home, CheckCircle2, Clock, XCircle, AlertTriangle } from "lucide-react";
 
 /* ============== Helpers ============== */
 const thb = (n) =>
-  Number(n || 0).toLocaleString("th-TH", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const fmtDate = (v) => {
   if (!v) return "";
@@ -30,19 +16,15 @@ const fmtDate = (v) => {
   }
 };
 
-const statusTH = (s) => {
-  if (!s) return "";
-  const k = String(s).toLowerCase();
-  const m = {
-    approved: "ชำระเสร็จสิ้น",
-    paid: "ชำระเสร็จสิ้น",
-    unpaid: "ยังไม่ชำระ",
-    pending: "รอตรวจสอบ",
-    rejected: "ถูกปฏิเสธ",
-    overdue: "เกินกำหนด",
-    partial: "ชำระบางส่วน",
-  };
-  return m[k] || s;
+// normalize to array
+const asArray = (input) => {
+  if (Array.isArray(input)) return input;
+  if (input?.data && Array.isArray(input.data)) return input.data;
+  if (input?.rows && Array.isArray(input.rows)) return input.rows;
+  if (input?.items && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  console.warn("[PaymentsTable] non-array data received:", input);
+  return [];
 };
 
 const StatusBadge = ({ status }) => {
@@ -96,17 +78,17 @@ function TdRight({ children, className = "" }) {
  *  - setRange: fn to update range
  */
 export default function PaymentsTable({ data, range, setRange }) {
-  const items = Array.isArray(data) ? data : [];
+  const items = asArray(data);
 
-  // local filters for UX (ไม่บังคับฝั่งนอกต้องส่งมา)
-  const [status, setStatus] = useState("all");      // all | approved | pending | rejected | partial | unpaid | overdue
+  // local filters
+  const [status, setStatus] = useState("all"); // all | approved | pending | rejected | partial | unpaid | overdue
   const [q, setQ] = useState("");
 
   // filter + map
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return items.filter((p) => {
-      // date inside range (ถ้า UI ฝั่งนอกเป็นผู้คุมช่วงอยู่แล้ว ฟังก์ชันนี้จะผ่านอยู่ดี)
+    return items.filter((p = {}) => {
+      // date inside range
       const d = fmtDate(p.paid_at || p.payment_date || p.date || p.paidAt);
       if (range?.from && d && d < range.from) return false;
       if (range?.to && d && d > range.to) return false;
@@ -117,7 +99,6 @@ export default function PaymentsTable({ data, range, setRange }) {
         if (raw !== status) return false;
       }
 
-      // search
       if (!term) return true;
       const room   = String(p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "").toLowerCase();
       const bill   = String(p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "").toLowerCase();
@@ -127,12 +108,9 @@ export default function PaymentsTable({ data, range, setRange }) {
   }, [items, status, q, range?.from, range?.to]);
 
   const kpi = useMemo(() => {
-    const total = filtered.reduce(
-      (sum, p) => sum + Number(p.amount ?? p.total ?? p.amount_paid ?? 0),
-      0
-    );
+    const total = filtered.reduce((sum, p = {}) => sum + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0);
     const count = filtered.length;
-    const pending = filtered.filter((p) =>
+    const pending = filtered.filter((p = {}) =>
       ["pending"].includes(String(p.payment_status || p.pay_status || p.status || p.invoice_status || "").toLowerCase())
     ).length;
     return { total, count, pending };
@@ -149,9 +127,7 @@ export default function PaymentsTable({ data, range, setRange }) {
             </div>
             <div>
               <h3 className="text-2xl font-bold text-slate-900">การชำระเงิน</h3>
-              <p className="text-slate-600 text-sm mt-0.5">
-                สรุปยอดที่ชำระตามช่วงเวลา • ค้นหา • กรองสถานะ
-              </p>
+              <p className="text-slate-600 text-sm mt-0.5">สรุปยอดที่ชำระตามช่วงเวลา • ค้นหา • กรองสถานะ</p>
             </div>
           </div>
           <p className="text-xs text-slate-500">
@@ -167,7 +143,7 @@ export default function PaymentsTable({ data, range, setRange }) {
         <KPI title="รอตรวจสอบ" value={kpi.pending} tone="amber" />
       </div>
 
-      {/* Filters (รวมในกรอบเดียว) */}
+      {/* Filters */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-5">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
           {/* จากวันที่ */}
@@ -255,17 +231,13 @@ export default function PaymentsTable({ data, range, setRange }) {
                   </td>
                 </tr>
               ) : (
-                filtered.map((p, i) => {
+                filtered.map((p = {}, i) => {
                   const paidDate = p.paid_at || p.payment_date || p.date || p.paidAt;
-                  const room =
-                    p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "-";
-                  const invoiceNo =
-                    p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "-";
+                  const room = p.room_no || p.room_number || p.roomNo || p.room || p.room_id || p.roomId || "-";
+                  const invoiceNo = p.invoice_no || p.invoiceNo || p.invoice_id || p.invoiceId || p.bill_no || "-";
                   const amount = Number(p.amount ?? p.total ?? p.amount_paid ?? 0);
-                  const payer =
-                    p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "-";
-                  const rawStatus =
-                    p.payment_status || p.pay_status || p.status || p.invoice_status || "";
+                  const payer = p.payer_name || p.tenant_name || p.fullname || p.name || p.tenant_fullname || p.payer || p.tenant_id || "-";
+                  const rawStatus = p.payment_status || p.pay_status || p.status || p.invoice_status || "";
 
                   return (
                     <tr key={`${invoiceNo}-${i}`} className="hover:bg-indigo-50/30 transition-colors">
@@ -302,11 +274,9 @@ export default function PaymentsTable({ data, range, setRange }) {
             {filtered.length > 0 && (
               <tfoot>
                 <tr className="bg-indigo-50 border-t border-indigo-100">
-                  <td className="px-6 py-3 font-semibold text-slate-900" colSpan={3}>
-                    รวมทั้งสิ้น
-                  </td>
+                  <td className="px-6 py-3 font-semibold text-slate-900" colSpan={3}>รวมทั้งสิ้น</td>
                   <TdRight className="font-bold text-slate-900">
-                    {thb(filtered.reduce((s, p) => s + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0))}
+                    {thb(filtered.reduce((s, p = {}) => s + Number(p.amount ?? p.total ?? p.amount_paid ?? 0), 0))}
                   </TdRight>
                   <td className="px-6 py-3 text-slate-700" colSpan={2}>
                     ใบชำระทั้งหมด {filtered.length} ใบ

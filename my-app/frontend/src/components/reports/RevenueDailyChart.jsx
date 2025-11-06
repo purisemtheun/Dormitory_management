@@ -1,34 +1,30 @@
-// src/components/reports/RevenueDailyChart.jsx
 import React, { useMemo } from "react";
-import {
-  CalendarRange,
-  BarChart3,
-  Receipt,
-  ChevronDown,
-} from "lucide-react";
+import { CalendarRange, BarChart3, Receipt, ChevronDown } from "lucide-react";
 
 /* ========================= helpers ========================= */
+const asArray = (input) => {
+  if (Array.isArray(input)) return input;
+  if (input?.data && Array.isArray(input.data)) return input.data;
+  if (input?.rows && Array.isArray(input.rows)) return input.rows;
+  if (input?.items && Array.isArray(input.items)) return input.items;
+  if (input == null || input === "") return [];
+  console.warn("[RevenueDailyChart] non-array data received:", input);
+  return [];
+};
+
 function normalizeDate(v) {
   if (!v) return "";
   const s = String(v);
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // already YYYY-MM-DD
-
   const d = new Date(s);
-  if (Number.isNaN(d.getTime())) {
-    return s.slice(0, 10);
-  }
+  if (Number.isNaN(d.getTime())) return s.slice(0, 10);
   // force to local day string (avoid UTC shift)
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 10);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
 const num = (v) => Number(v || 0) || 0;
 const thb = (n) =>
-  num(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /* ========================= UI pieces ========================= */
 function KPICard({ title, value, icon, tone = "slate" }) {
@@ -65,26 +61,21 @@ function TdRight({ children, className = "" }) {
 }
 
 /* ========================= Component ========================= */
-export default function RevenueDailyChart({
-  data = [],
-  range = { from: "", to: "" },
-  setRange,
-  onDateClick, // optional: (yyyy-mm-dd) => void
-}) {
+export default function RevenueDailyChart({ data = [], range = { from: "", to: "" }, setRange, onDateClick }) {
+  const safe = asArray(data);
+
   // map/normalize rows
   const rows = useMemo(() => {
-    const items = Array.isArray(data) ? data : [];
-    return items
-      .map((r) => {
-        const dateRaw =
-          r.period || r.date || r.report_date || r.paid_at || r.payment_date || "";
+    return safe
+      .map((r = {}) => {
+        const dateRaw = r.period || r.date || r.report_date || r.paid_at || r.payment_date || "";
         const amt = num(r.revenue ?? r.total ?? 0);
         const paid = num(r.paid ?? r.count ?? r.payments_count ?? 0);
         return { _date: normalizeDate(dateRaw), amount: amt, paid };
       })
       .filter((x) => x._date)
       .sort((a, b) => a._date.localeCompare(b._date));
-  }, [data]);
+  }, [safe]);
 
   // KPIs
   const kpi = useMemo(() => {
@@ -140,30 +131,10 @@ export default function RevenueDailyChart({
 
       {/* ===== KPI Row ===== */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard
-          title={`รวม (${kpi.days} วัน)`}
-          value={`฿ ${thb(kpi.total)}`}
-          icon={<BarChart3 />}
-          tone="emerald"
-        />
-        <KPICard
-          title="เฉลี่ยต่อวัน"
-          value={`฿ ${thb(kpi.avg)}`}
-          icon={<BarChart3 />}
-          tone="sky"
-        />
-        <KPICard
-          title="สูงสุดต่อวัน"
-          value={`฿ ${thb(kpi.max)}`}
-          icon={<BarChart3 />}
-          tone="violet"
-        />
-        <KPICard
-          title="จำนวนการชำระ (ใบ)"
-          value={kpi.totalPaid.toLocaleString()}
-          icon={<Receipt />}
-          tone="amber"
-        />
+        <KPICard title={`รวม (${kpi.days} วัน)`} value={`฿ ${thb(kpi.total)}`} icon={<BarChart3 />} tone="emerald" />
+        <KPICard title="เฉลี่ยต่อวัน" value={`฿ ${thb(kpi.avg)}`} icon={<BarChart3 />} tone="sky" />
+        <KPICard title="สูงสุดต่อวัน" value={`฿ ${thb(kpi.max)}`} icon={<BarChart3 />} tone="violet" />
+        <KPICard title="จำนวนการชำระ (ใบ)" value={kpi.totalPaid.toLocaleString()} icon={<Receipt />} tone="amber" />
       </div>
 
       {/* ===== Summary banner ===== */}
@@ -198,12 +169,8 @@ export default function RevenueDailyChart({
                     onClick={() => onDateClick?.(r._date)}
                     title="คลิกเพื่อดูรายละเอียดวันนี้"
                   >
-                    <td className="px-6 py-4 font-semibold text-slate-900">
-                      {r._date}
-                    </td>
-                    <TdRight className="font-bold text-slate-900">
-                      {thb(r.amount)}
-                    </TdRight>
+                    <td className="px-6 py-4 font-semibold text-slate-900">{r._date}</td>
+                    <TdRight className="font-bold text-slate-900">{thb(r.amount)}</TdRight>
                     <TdRight>{(r.paid || 0).toLocaleString()}</TdRight>
                   </tr>
                 ))
