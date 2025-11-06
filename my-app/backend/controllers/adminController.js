@@ -745,4 +745,4 @@ module.exports = {
   decideInvoice,
   cancelInvoice,
   resendInvoiceNotification,
-};พำ
+};
