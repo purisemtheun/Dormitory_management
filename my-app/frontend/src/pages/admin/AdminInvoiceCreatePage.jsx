@@ -3,55 +3,55 @@ import React, { useEffect, useMemo, useState } from "react";
 import { getToken } from "../../utils/auth";
 import { FileSpreadsheet, CalendarDays, UserCircle2 } from "lucide-react";
 
-/* ========= API helpers ========= */
-const api = {
-  getTenants: async () => {
-    const r = await fetch("/api/admin/tenants", {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    const text = await r.text();
-    let d = {};
-    try { d = JSON.parse(text); } catch { d = []; }
-    if (!r.ok) throw new Error(d?.error || d?.message || "โหลดผู้เช่าไม่สำเร็จ");
-    return Array.isArray(d) ? d : [];
-  },
+/* ========= tiny utils ========= */
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const baht = (n) =>
+  typeof n === "number"
+    ? n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : n;
+const toDate = (s) => (s ? String(s).slice(0, 10) : "-");
 
-  createInvoice: async (payload) => {
-    const r = await fetch("/api/admin/invoices", {
+/* ========= API helpers (defensive fetch) ========= */
+async function fetchJSON(input, init) {
+  const r = await fetch(input, init);
+  const text = await r.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!r.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) || `HTTP ${r.status} ${r.statusText}`
+    );
+  }
+  return data;
+}
+
+const api = {
+  getTenants: () =>
+    fetchJSON("/api/admin/tenants", {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    }).then((a) => (Array.isArray(a) ? a : [])),
+
+  listInvoices: (limit = 10) =>
+    fetchJSON(`/api/admin/invoices?limit=${limit}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    }).then((a) => (Array.isArray(a) ? a : [])),
+
+  createInvoice: (payload) =>
+    fetchJSON("/api/admin/invoices", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${getToken()}`,
       },
       body: JSON.stringify(payload),
-    });
-    const text = await r.text();
-    let d = {};
-    try { d = JSON.parse(text); } catch {}
-    if (!r.ok) throw new Error(d?.error || d?.message || "ออกใบแจ้งหนี้ไม่สำเร็จ");
-    return d;
-  },
-
-  listInvoices: async (limit = 10) => {
-    const r = await fetch(`/api/admin/invoices?limit=${limit}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    const text = await r.text();
-    if (!text) return [];
-    let d = [];
-    try { d = JSON.parse(text); } catch { d = []; }
-    return Array.isArray(d) ? d : [];
-  },
+    }),
 };
 
-/* ========= Utils ========= */
-const baht = (n) =>
-  typeof n === "number"
-    ? n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : n;
-
-const toDate = (s) => (s ? String(s).slice(0, 10) : "-");
-
+/* ========= view helpers ========= */
 const statusView = (inv) => {
   const raw = String(inv?.status || "").toLowerCase();
   if (raw !== "paid" && inv?.slip_url) {
@@ -64,39 +64,36 @@ const statusView = (inv) => {
 };
 
 export default function AdminInvoiceCreatePage() {
+  /* ---------- page state ---------- */
   const [tenants, setTenants] = useState([]);
+  const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
 
-  // form
+  /* ---------- form state ---------- */
   const [tenantId, setTenantId] = useState("");
   const [periodYm, setPeriodYm] = useState("");
   const [dueDate, setDueDate] = useState("");
-
-  // 🆕 ยอดแยก + ยอดรวม (ยอดรวมจะถูกส่งเป็น amount)
   const [rent, setRent] = useState("");
   const [water, setWater] = useState("");
   const [elec, setElec] = useState("");
 
-  const total = useMemo(() => {
-    const r = Number(rent || 0);
-    const w = Number(water || 0);
-    const e = Number(elec || 0);
-    return r + w + e;
-  }, [rent, water, elec]);
+  /* ---------- derived total (no setState; avoid loops) ---------- */
+  const total = useMemo(() => num(rent) + num(water) + num(elec), [rent, water, elec]);
 
-  const [busy, setBusy] = useState(false);
-
-  // ประวัติ
-  const [recent, setRecent] = useState([]);
-
+  /* ---------- initial load (safe) ---------- */
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
         setLoading(true);
         setFormErr("");
         const [ts, invs] = await Promise.all([api.getTenants(), api.listInvoices(10)]);
-        setTenants(Array.isArray(ts) ? ts.filter(t => (t.is_deleted ?? 0) === 0) : []);
+        if (!alive) return;
+
+        const okTenants = (ts || []).filter((t) => (t.is_deleted ?? 0) === 0);
+        setTenants(okTenants);
 
         const sorted = [...(invs || [])].sort((a, b) => {
           const ax = new Date(a?.created_at || a?.updated_at || 0).getTime();
@@ -105,29 +102,37 @@ export default function AdminInvoiceCreatePage() {
         });
         setRecent(sorted.slice(0, 3));
       } catch (e) {
-        setFormErr(e.message || "เกิดข้อผิดพลาดในการโหลดข้อมูล");
+        if (alive) setFormErr(e.message || "เกิดข้อผิดพลาดในการโหลดข้อมูล");
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
+  /* ---------- submit ---------- */
   const submitOne = async (e) => {
     e.preventDefault();
-    const amt = Number(total);
+    if (busy) return;
+
+    const amt = num(total);
     if (!tenantId || !periodYm || !dueDate || !(amt > 0)) {
       alert("กรอกให้ครบและถูกต้อง: ผู้เช่า / เดือนงวด / กำหนดชำระ / ยอดรวม (> 0)");
       return;
     }
+
     const payload = {
-      tenant_id: String(tenantId).trim(),
+      tenant_id: String(tenantId).trim(),     // ส่งเป็น tenant_id ตรง ๆ
       period_ym: String(periodYm).trim(),
       due_date: String(dueDate).slice(0, 10),
-      rent_amount: Number(rent || 0),
-      water_amount: Number(water || 0),
-      electric_amount: Number(elec || 0),
-      amount: amt, // ให้ backend และรายงานเดิมใช้งานได้ต่อ
+      rent_amount: num(rent),
+      water_amount: num(water),
+      electric_amount: num(elec),
+      amount: amt,                            // ให้ backend ใช้รายงานเดิมได้ต่อ
     };
+
     try {
       setBusy(true);
       setFormErr("");
@@ -142,6 +147,7 @@ export default function AdminInvoiceCreatePage() {
       setWater("");
       setElec("");
 
+      // refresh recent
       const invs = await api.listInvoices(10);
       const sorted = [...(invs || [])].sort((a, b) => {
         const ax = new Date(a?.created_at || a?.updated_at || 0).getTime();
@@ -156,7 +162,7 @@ export default function AdminInvoiceCreatePage() {
     }
   };
 
-  const tenantName = useMemo(() => {
+  const tenantNameMap = useMemo(() => {
     const m = new Map();
     tenants.forEach((t) => {
       m.set(String(t.tenant_id), t.fullname || t.name || `ผู้เช่า ${t.tenant_id}`);
@@ -169,7 +175,7 @@ export default function AdminInvoiceCreatePage() {
   return (
     <div className="min-h-[calc(100vh-80px)] bg-slate-50">
       <div className="max-w-7xl mx-auto px-6 sm:px-8 py-6 space-y-5">
-        {/* Header Card */}
+        {/* Header */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
@@ -184,7 +190,7 @@ export default function AdminInvoiceCreatePage() {
           </div>
         </div>
 
-        {/* Form Card */}
+        {/* Form */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 overflow-hidden">
           <div className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3.5">
             <FileSpreadsheet size={18} className="opacity-90" />
@@ -264,7 +270,7 @@ export default function AdminInvoiceCreatePage() {
               </div>
             </div>
 
-            {/* 🆕 ยอดแยก */}
+            {/* ยอดแยก */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-slate-700">ค่าเช่า (บาท)</label>
@@ -316,12 +322,12 @@ export default function AdminInvoiceCreatePage() {
               </div>
             </div>
 
-            {/* 🧮 ยอดรวม (อ่านอย่างเดียว) */}
+            {/* ยอดรวม (อ่านอย่างเดียว) */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700">ยอดรวม (บาท)</label>
               <input
                 readOnly
-                value={total.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                value={baht(total)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 h-11 text-base font-semibold text-slate-800"
               />
               <p className="text-xs text-slate-500">ระบบจะบันทึกยอดรวมนี้ลงในช่อง amount ของใบแจ้งหนี้</p>
@@ -354,14 +360,11 @@ export default function AdminInvoiceCreatePage() {
             <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {recent.map((r, idx) => {
                 const st = statusView(r);
-                const name = tenantName.get(String(r.tenant_id)) || r.tenant_id || "-";
+                const name = tenantNameMap.get(String(r.tenant_id)) || r.tenant_id || "-";
                 const key = r.id ?? r.invoice_id ?? r.invoice_no ?? `${r.tenant_id}-${r.period_ym}-${idx}`;
+
                 const showLine = (label, val) =>
-                  Number(val || 0) > 0 ? (
-                    <span className="mr-2">
-                      {label} {baht(Number(val))}
-                    </span>
-                  ) : null;
+                  num(val) > 0 ? <span className="mr-2">{label} {baht(num(val))}</span> : null;
 
                 return (
                   <div key={key} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
@@ -381,8 +384,6 @@ export default function AdminInvoiceCreatePage() {
                         <div className="text-xs text-slate-500">
                           งวด {r.period_ym || "-"} · กำหนด {toDate(r.due_date)}
                         </div>
-
-                        {/* 🧾 Breakdown ถ้ามี */}
                         {(r.rent_amount || r.water_amount || r.electric_amount) && (
                           <div className="text-xs text-slate-500 mt-1">
                             {showLine("ค่าเช่า", r.rent_amount)}
@@ -394,7 +395,7 @@ export default function AdminInvoiceCreatePage() {
 
                       <div className="text-right">
                         <div className="text-sm font-semibold text-slate-800">
-                          ฿ {baht(Number(r.amount || 0))}
+                          ฿ {baht(num(r.amount))}
                         </div>
                         <div className="text-[11px] text-slate-400">{toDate(r.created_at)}</div>
                       </div>
